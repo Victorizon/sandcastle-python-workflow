@@ -1,0 +1,10 @@
+{
+  "order": {
+    "order_id": "ord-err-004",
+    "partner_id": "partner-trusted-01",
+    "customer_email": "billing.demo@example.test",
+    "channel": "api",
+    "region": "US"
+  },
+  "raise_on_signals": "Upstream verification API timeout after 30s"
+}

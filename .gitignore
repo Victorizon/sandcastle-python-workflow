@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.json
+htmlcov/
+*.egg-info/
+dist/
+build/
+.sandcastle/.env
+.sandcastle/logs/
+.sandcastle/worktrees/
+.sandcastle/node_modules/

@@ -1,0 +1,19 @@
+{
+  "order": {
+    "order_id": "ord-rej-partial-007",
+    "partner_id": "partner-external-99",
+    "customer_email": "shopper.demo@example.test",
+    "channel": "web",
+    "region": "CA"
+  },
+  "allowlisted_partners": ["partner-trusted-01"],
+  "signals": [
+    {
+      "channel": "web",
+      "region": "CA",
+      "payment_verified": true,
+      "address_matched": false,
+      "risk_tier": "high"
+    }
+  ]
+}

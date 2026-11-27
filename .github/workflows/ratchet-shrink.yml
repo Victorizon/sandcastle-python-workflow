@@ -1,0 +1,44 @@
+name: Ratchet Shrink
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  shrink:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dev dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements-dev.txt
+          .venv/bin/pip install -e .
+
+      - name: Shrink monotonic ratchet & raise coverage floor
+        run: |
+          .venv/bin/python scripts/ratchet.py --shrink
+          .venv/bin/pytest --cov=src --cov-report=json:.coverage.json
+          .venv/bin/python scripts/test_guard.py --base HEAD --coverage-json .coverage.json --shrink-coverage
+          rm -f .coverage.json
+
+      - name: Open or update shrink PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/ratchet-shrink
+          commit-message: "chore(ratchet): shrink baseline"
+          title: "chore(ratchet): shrink baseline"
+          body: "Automated monotonic ratchet shrink and coverage floor update after merge to main."

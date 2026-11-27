@@ -1,0 +1,11 @@
+{
+  "order": {
+    "order_id": "ord-missing-003",
+    "partner_id": "partner-trusted-01",
+    "customer_email": "ops.demo@example.test",
+    "channel": "web",
+    "region": "UK"
+  },
+  "allowlisted_partners": ["partner-trusted-01"],
+  "signals": []
+}

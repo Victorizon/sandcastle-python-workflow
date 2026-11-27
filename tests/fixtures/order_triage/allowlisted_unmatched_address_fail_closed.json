@@ -1,0 +1,19 @@
+{
+  "order": {
+    "order_id": "ord-partial-006",
+    "partner_id": "partner-trusted-01",
+    "customer_email": "guest.demo@example.test",
+    "channel": "web",
+    "region": "US"
+  },
+  "allowlisted_partners": ["partner-trusted-01"],
+  "signals": [
+    {
+      "channel": "web",
+      "region": "US",
+      "payment_verified": true,
+      "address_matched": false,
+      "risk_tier": "low"
+    }
+  ]
+}

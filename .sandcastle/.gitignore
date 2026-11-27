@@ -1,0 +1,4 @@
+.env
+worktrees/
+logs/
+node_modules/

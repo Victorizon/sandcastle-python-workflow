@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sandcastle-python-workflow"
+version = "0.1.0"
+description = "Deterministic Matt Pocock + Sandcastle workflow template for Python automation repos"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests", "tests_tooling", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "C90", # mccabe complexity
+    "S",   # flake8-bandit security checks
+    "PL",  # pylint subset
+]
+ignore = [
+    "S101",    # allow assert in tests (scoped below)
+    "PLR2004", # magic values in domain thresholds/tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+"tests_tooling/**/*.py" = ["S101", "S105", "S106", "S603", "S607"]
+"scripts/**/*.py" = ["S603", "S607"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+include = ["src", "tests", "tests_tooling", "scripts"]
+extraPaths = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Processors must not import third-party SDKs directly"
+type = "forbidden"
+source_modules = [
+    "app.processors",
+]
+forbidden_modules = [
+    "third_party_sdk",
+]
+ignore_imports = [
+    "app.processors.* -> app.adapters.*",
+]

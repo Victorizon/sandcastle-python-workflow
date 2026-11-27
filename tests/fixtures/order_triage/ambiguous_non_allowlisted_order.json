@@ -1,0 +1,19 @@
+{
+  "order": {
+    "order_id": "ord-ambig-005",
+    "partner_id": "partner-standard-42",
+    "customer_email": "client.demo@example.test",
+    "channel": "web",
+    "region": "DE"
+  },
+  "allowlisted_partners": ["partner-trusted-01"],
+  "signals": [
+    {
+      "channel": "web",
+      "region": "DE",
+      "payment_verified": true,
+      "address_matched": true,
+      "risk_tier": "low"
+    }
+  ]
+}
