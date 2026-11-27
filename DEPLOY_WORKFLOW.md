@@ -118,3 +118,4 @@ Watch the deterministic outer loop execute:
    - Enable **Require a pull request before merging**
    - Enable **Require status checks to pass before merging** → select **`verify`** (from `.github/workflows/ci.yml`)
    - Enable **Do not allow bypassing the above settings** (applies even to repository admins)
+   - Under **Settings → Actions → General → Workflow permissions**, enable **Allow GitHub Actions to create and approve pull requests** (required for automated `ratchet-shrink.yml` PRs)
