@@ -21,7 +21,7 @@ Unconstrained LLM chats often get stuck in endless loops, weaken existing tests,
 
 ## Quickstart (WSL2 + Docker Desktop)
 
-See [DEPLOY_WORKFLOW.md](./DEPLOY_WORKFLOW.md) for the exact step-by-step setup, local smoke test, daily shipping loop, local `pre-commit`/`pre-push` branch locks (`scripts/branch_guard.py`), and 2-minute switch to server-enforced GitHub Issues & Actions. For multi-thousand-line legacy scripts, see [LEGACY_REFACTORING_PLAYBOOK.md](./LEGACY_REFACTORING_PLAYBOOK.md).
+See [DEPLOY_WORKFLOW.md](./DEPLOY_WORKFLOW.md) for the exact step-by-step setup, local smoke test, daily shipping loop, local `pre-commit`/`pre-push` branch locks (`scripts/branch_guard.py`), and 2-minute switch to server-enforced GitHub Issues & Actions. For multi-thousand-line legacy scripts, see [LEGACY_REFACTORING_PLAYBOOK.md](./LEGACY_REFACTORING_PLAYBOOK.md) and [docs/EASY_TO_CHANGE_GUIDE.md](./docs/EASY_TO_CHANGE_GUIDE.md).
 
 ```bash
 # 1. Python venv + dev tooling

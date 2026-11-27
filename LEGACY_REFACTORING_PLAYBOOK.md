@@ -2,7 +2,7 @@
 
 Refactoring a 3,000–5,000+ line script patched over years is where barebone AI chats fail hardest: invisible historical edge cases get silently deleted, huge diffs spiral out of control, and deadlines slip.
 
-This playbook uses **Strangler-Fig Extraction + Characterization Fixtures + Expand–Contract** inside the `sandcastle-python-workflow` guardrails so `main` stays green and shippable after **every single ticket**.
+This playbook uses **Strangler-Fig Extraction + Characterization Fixtures + Expand–Contract** inside the `sandcastle-python-workflow` guardrails so `main` stays green and shippable after **every single ticket**. For the broader mindset and 90-day trajectory, see [docs/EASY_TO_CHANGE_GUIDE.md](./docs/EASY_TO_CHANGE_GUIDE.md).
 
 ---
 
