@@ -178,6 +178,7 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             "docs/AUTONOMY_AND_BOTS_GUIDE.md",
             ".sandcastle/plan-prompt.md",
             ".sandcastle/implement-prompt.md",
+            ".sandcastle/fix-prompt.md",
             ".sandcastle/review-prompt.md",
             ".sandcastle/decompose-prompt.md",
             ".sandcastle/merge-prompt.md",

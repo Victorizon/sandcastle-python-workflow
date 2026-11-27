@@ -244,6 +244,96 @@ async function handleDriftRemediation(
   }
 }
 
+async function runFreshFixContainer(params: {
+  readonly ticket: PlannedTicket;
+  readonly source: string;
+  readonly details: string;
+  readonly dashboard: PMDashboard;
+  readonly startedAtMs: number;
+  readonly logPath: string;
+}): Promise<{ readonly ok: boolean; readonly decomposed: boolean }> {
+  await using fixSandbox = await sandcastle.createSandbox({
+    sandbox: makeDocker(),
+    branch: params.ticket.branch,
+  });
+  const watchdog = new DriftWatchdog();
+  try {
+    const fixRun = await fixSandbox.run({
+      name: `Fixer ${params.ticket.id}`,
+      agent: sandcastle.codex(MODEL, {
+        effort: "medium",
+        approvalsReviewer: "auto_review",
+        captureSessions: true,
+      }),
+      promptFile: "./.sandcastle/fix-prompt.md",
+      promptArgs: {
+        TICKET_ID: params.ticket.id,
+        TICKET_TITLE: params.ticket.title,
+        BRANCH: params.ticket.branch,
+        FAILURE_SOURCE: params.source,
+        FAILURE_DETAILS: params.details,
+      },
+      maxIterations: MAX_IMPLEMENT_ITERATIONS,
+      signal: watchdog.signal,
+      logging: {
+        type: "file",
+        path: params.logPath,
+        onAgentStreamEvent: (ev) => {
+          watchdog.onEvent(ev);
+          const pmNote = summarizeAgentEventForPm(ev);
+          if (pmNote) {
+            params.dashboard.upsertSlice(params.ticket.id, {
+              pmSummary: pmNote,
+              watchdog: {
+                elapsedSec: Math.round((Date.now() - params.startedAtMs) / 1000),
+                toolCalls: watchdog.toolCallCount,
+              },
+            });
+          }
+        },
+      },
+    });
+
+    const numstat = await fixSandbox.exec("git diff --numstat main..HEAD");
+    const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
+    const lastCtx = fixRun.iterations.at(-1)?.contextWindow;
+    const postDrift = watchdog.checkPostRun({
+      diffFiles,
+      diffLines,
+      contextTokens: lastCtx?.tokens,
+      contextLimit: lastCtx?.limit,
+      completed: fixRun.completionSignal !== undefined,
+    });
+    if (postDrift) {
+      const stat = await fixSandbox.exec("git diff --stat main..HEAD");
+      const decomposed = await handleDriftRemediation(
+        params.ticket,
+        postDrift,
+        stat.stdout.trim(),
+        params.dashboard,
+      );
+      return { ok: false, decomposed };
+    }
+    return { ok: true, decomposed: false };
+  } catch (err) {
+    watchdog.dispose();
+    const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
+    if (drift) {
+      const stat = await fixSandbox.exec("git diff --stat main..HEAD");
+      const decomposed = await handleDriftRemediation(
+        params.ticket,
+        drift,
+        stat.stdout.trim(),
+        params.dashboard,
+      );
+      return { ok: false, decomposed };
+    }
+    throw err;
+  } finally {
+    watchdog.dispose();
+  }
+}
+
 async function processTicket(
   ticket: PlannedTicket,
   dashboard: PMDashboard,
@@ -345,37 +435,70 @@ async function processTicket(
     }
   }
 
-  // Phase B: Fresh, zero-trust Verifier & Reviewer container booted strictly from committed branch
-  await using sandbox = await sandcastle.createSandbox({
-    sandbox: makeDocker(),
-    branch: ticket.branch,
-  });
-
-  // Deterministic shell verification gate in fresh container (read-only /opt/venv)
-  dashboard.upsertSlice(ticket.id, {
-    stage: "verifying",
-    pmSummary: "Fresh Verifier container running 6 mechanical checks (format, ratchet, boundaries, coverage, anti-tamper, mutation)...",
-  });
+  // Phase B: Fresh, zero-trust Verifier container per attempt (read-only /opt/venv)
   let checkPassed = false;
+  let tamperStrikes = 0;
   for (let attempt = 0; attempt <= MAX_VERIFY_RETRIES; attempt++) {
-    const guardRes = await sandbox.exec("python scripts/test_guard.py --base main");
-    if (guardRes.exitCode !== 0) {
-      dashboard.recordChallenge(ticket.id, {
-        source: "test_guard",
-        finding: "Blocked attempt to delete or weaken existing tests/fixtures.",
-        outcome: "blocked",
+    dashboard.upsertSlice(ticket.id, {
+      stage: "verifying",
+      pmSummary: `Fresh Verifier container running 6 mechanical checks (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES + 1})...`,
+    });
+
+    let guardExit = 0;
+    let guardOut = "";
+    let checkExit = 0;
+    let checkOut = "";
+    {
+      await using verifySandbox = await sandcastle.createSandbox({
+        sandbox: makeDocker(),
+        branch: ticket.branch,
       });
-      escalateTicketToHuman(
-        ticket.id,
-        `BLOCKED by strict test lock (\`scripts/test_guard.py\`):\n\n${guardRes.stdout}`,
-        dashboard,
-      );
-      return { approved: false, decomposed: false };
+      const guardRes = await verifySandbox.exec("python scripts/test_guard.py --base main");
+      guardExit = guardRes.exitCode;
+      guardOut = guardRes.stdout;
+      if (guardExit === 0) {
+        const checkRes = await verifySandbox.exec("python scripts/check.py");
+        checkExit = checkRes.exitCode;
+        checkOut = `${checkRes.stdout}\n${checkRes.stderr}`.trim();
+      }
     }
 
-    const checkRes = await sandbox.exec("python scripts/check.py");
-    if (checkRes.exitCode === 0) {
-      const q = parseCheckMetrics(checkRes.stdout);
+    if (guardExit !== 0) {
+      tamperStrikes += 1;
+      dashboard.recordChallenge(ticket.id, {
+        source: "test_guard",
+        finding: `Blocked test/fixture/harness tampering (strike ${tamperStrikes}/2).`,
+        outcome: tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES ? "blocked" : "fixed",
+      });
+      if (tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES) {
+        escalateTicketToHuman(
+          ticket.id,
+          `BLOCKED by strict test/harness lock (\`scripts/test_guard.py\`, strike ${tamperStrikes}):\n\n${guardOut}`,
+          dashboard,
+        );
+        return { approved: false, decomposed: false };
+      }
+      dashboard.upsertSlice(ticket.id, {
+        stage: "remediating",
+        pmSummary:
+          "Test Guard caught unauthorized test/harness edit (strike 1/2) — booting fresh Fixer to restore locked files & fix properly...",
+      });
+      const fixRes = await runFreshFixContainer({
+        ticket,
+        source: "scripts/test_guard.py (anti-tamper lock)",
+        details: guardOut,
+        dashboard,
+        startedAtMs,
+        logPath,
+      });
+      if (!fixRes.ok) {
+        return { approved: false, decomposed: fixRes.decomposed };
+      }
+      continue;
+    }
+
+    if (checkExit === 0) {
+      const q = parseCheckMetrics(checkOut);
       dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
       checkPassed = true;
       break;
@@ -383,51 +506,71 @@ async function processTicket(
     if (attempt === MAX_VERIFY_RETRIES) {
       escalateTicketToHuman(
         ticket.id,
-        `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fix resumes.`,
+        `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fresh Fixer rounds.`,
         dashboard,
       );
       return { approved: false, decomposed: false };
     }
     dashboard.upsertSlice(ticket.id, {
       stage: "remediating",
-      pmSummary: `6-gate check failed — Builder fixing reported issues (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES})...`,
+      pmSummary: `6-gate check failed — booting fresh Fixer container (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES})...`,
     });
-    await impl.resume?.(
-      `\`python scripts/check.py\` failed (exit ${checkRes.exitCode}):\n\n${checkRes.stdout}\n${checkRes.stderr}\n\nFix the failures WITHOUT deleting/weakening existing tests or fixtures, re-run \`python scripts/check.py\`, commit your fix, and output <promise>COMPLETE</promise>.`,
-    );
+    const fixRes = await runFreshFixContainer({
+      ticket,
+      source: "python scripts/check.py (6-gate verification)",
+      details: checkOut.slice(-4000),
+      dashboard,
+      startedAtMs,
+      logPath,
+    });
+    if (!fixRes.ok) {
+      return { approved: false, decomposed: fixRes.decomposed };
+    }
   }
 
   if (!checkPassed || !isAheadOfHead(ticket.branch)) {
     return { approved: false, decomposed: false };
   }
 
-  // Fresh-context Adversarial Reviewer
+  // Phase C: Fresh-context Adversarial Reviewer in a clean container per round
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
     dashboard.upsertSlice(ticket.id, {
       stage: "reviewing",
       pmSummary: `Fresh Adversarial Reviewer checking diff against spec & CODING_STANDARDS.md (round ${round}/${MAX_REVIEW_ROUNDS})...`,
     });
-    const review = await sandbox.run({
-      name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
-      agent: sandcastle.codex(MODEL, {
-        effort: "high",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
-      promptFile: "./.sandcastle/review-prompt.md",
-      promptArgs: {
-        TICKET_ID: ticket.id,
-        TICKET_TITLE: ticket.title,
-        BRANCH: ticket.branch,
-      },
-      maxIterations: 1,
-    });
 
-    const postReviewCheck = await sandbox.exec("python scripts/check.py");
-    const verdict = parseVerdict(review.stdout);
+    let reviewStdout = "";
+    let postCheckExit = 1;
+    let postCheckOut = "";
+    {
+      await using reviewSandbox = await sandcastle.createSandbox({
+        sandbox: makeDocker(),
+        branch: ticket.branch,
+      });
+      const review = await reviewSandbox.run({
+        name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
+        agent: sandcastle.codex(MODEL, {
+          effort: "high",
+          approvalsReviewer: "auto_review",
+          captureSessions: true,
+        }),
+        promptFile: "./.sandcastle/review-prompt.md",
+        promptArgs: {
+          TICKET_ID: ticket.id,
+          TICKET_TITLE: ticket.title,
+          BRANCH: ticket.branch,
+        },
+        maxIterations: 1,
+      });
+      reviewStdout = review.stdout;
+      const postReviewCheck = await reviewSandbox.exec("python scripts/check.py");
+      postCheckExit = postReviewCheck.exitCode;
+      postCheckOut = `${postReviewCheck.stdout}\n${postReviewCheck.stderr}`.trim();
+    }
 
-    if (postReviewCheck.exitCode === 0 && verdict?.approved) {
-      const q = parseCheckMetrics(postReviewCheck.stdout);
+    const verdict = parseVerdict(reviewStdout);
+    if (postCheckExit === 0 && verdict?.approved) {
+      const q = parseCheckMetrics(postCheckOut);
       dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
       dashboard.upsertSlice(ticket.id, {
         stage: "merging",
@@ -471,13 +614,21 @@ async function processTicket(
     });
     dashboard.upsertSlice(ticket.id, {
       stage: "remediating",
-      pmSummary: `Adversarial Reviewer caught blocking findings — Builder addressing feedback...`,
+      pmSummary: `Adversarial Reviewer caught blocking findings — booting fresh Fixer container...`,
     });
 
-    const feedback = verdict?.blockingIssues.join("\n- ") || postReviewCheck.stdout;
-    await impl.resume?.(
-      `Adversarial reviewer raised blocking issues:\n- ${feedback}\n\nAddress each issue WITHOUT weakening existing tests, run \`python scripts/check.py\`, commit, and output <promise>COMPLETE</promise>.`,
-    );
+    const feedback = verdict?.blockingIssues.join("\n- ") || postCheckOut.slice(-3000);
+    const fixRes = await runFreshFixContainer({
+      ticket,
+      source: `Adversarial Reviewer (round ${round})`,
+      details: `- ${feedback}`,
+      dashboard,
+      startedAtMs,
+      logPath,
+    });
+    if (!fixRes.ok) {
+      return { approved: false, decomposed: fixRes.decomposed };
+    }
   }
 
   return { approved: false, decomposed: false };
@@ -573,6 +724,7 @@ async function main(): Promise<void> {
         break;
       }
 
+      const preMergeSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
       dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
       await sandcastle.run({
         sandbox: makeDocker(),
@@ -591,7 +743,7 @@ async function main(): Promise<void> {
         },
       });
 
-      // Deterministic host-side verification after Merger (never trust Merger's word alone)
+      // Deterministic host-side verification after Merger + optional multi-branch cross-slice audit
       let hostCheckPassed = true;
       try {
         execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
@@ -599,17 +751,49 @@ async function main(): Promise<void> {
         hostCheckPassed = false;
       }
 
-      if (!hostCheckPassed) {
+      let multiMergeConflictIssue: string | null = null;
+      if (hostCheckPassed && readyToMerge.length >= 2) {
+        const mergeReview = await sandcastle.run({
+          sandbox: makeDocker(),
+          name: "Post-Merge Cross-Slice Auditor",
+          agent: sandcastle.codex(MODEL, {
+            effort: "high",
+            approvalsReviewer: "auto_review",
+            captureSessions: true,
+          }),
+          prompt: [
+            `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
+            ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
+            `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
+            `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
+            `Then output <promise>COMPLETE</promise>.`,
+          ].join("\n"),
+          maxIterations: 1,
+        });
+        const mergeVerdict = parseVerdict(mergeReview.stdout);
+        if (!mergeVerdict?.approved) {
+          multiMergeConflictIssue =
+            mergeVerdict?.blockingIssues.join("; ") ||
+            "Post-merge cross-slice auditor flagged a conflict or dropped requirement.";
+        }
+      }
+
+      if (!hostCheckPassed || multiMergeConflictIssue !== null) {
+        // Atomic rollback so main is NEVER left broken!
+        try {
+          execFileSync("git", ["reset", "--hard", preMergeSha], { stdio: "inherit" });
+        } catch (err) {
+          console.error(`Failed to roll back main to ${preMergeSha}:`, err);
+        }
+        const reason = multiMergeConflictIssue
+          ? `Post-merge cross-slice audit blocked batch (main atomically rolled back to ${preMergeSha.slice(0, 7)}): ${multiMergeConflictIssue}`
+          : `Host post-merge \`python scripts/check.py\` FAILED (main atomically rolled back to ${preMergeSha.slice(0, 7)}).`;
         for (const t of readyToMerge) {
-          escalateTicketToHuman(
-            t.id,
-            "Host post-merge `python scripts/check.py` FAILED after Merger finished. Inspect `main` immediately.",
-            dashboard,
-          );
+          escalateTicketToHuman(t.id, reason, dashboard);
         }
         dashboard.setRunStatus(
           "blocked",
-          "Post-merge deterministic verification failed — halted for human inspection.",
+          `Post-merge verification failed — main atomically rolled back to ${preMergeSha.slice(0, 7)}.`,
         );
         break;
       }
