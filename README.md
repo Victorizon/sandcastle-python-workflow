@@ -21,7 +21,9 @@ Unconstrained LLM chats often get stuck in endless loops, weaken existing tests,
 
 ## Quickstart (WSL2 + Docker Desktop)
 
-See [DEPLOY_WORKFLOW.md](./DEPLOY_WORKFLOW.md) for the exact step-by-step setup, local smoke test, daily shipping loop, local `pre-commit`/`pre-push` branch locks (`scripts/branch_guard.py`), and 2-minute switch to server-enforced GitHub Issues & Actions. For multi-thousand-line legacy scripts, see [LEGACY_REFACTORING_PLAYBOOK.md](./LEGACY_REFACTORING_PLAYBOOK.md) and [docs/EASY_TO_CHANGE_GUIDE.md](./docs/EASY_TO_CHANGE_GUIDE.md). For Level 2 Goal Autonomy, Overnight Architecture Bots, Parallel Prototype Bake-Offs, and Parameter Tuning, see [docs/AUTONOMY_AND_BOTS_GUIDE.md](./docs/AUTONOMY_AND_BOTS_GUIDE.md).
+> **Interactive Visual Field Guide:** Open [docs/WORKFLOW_GUIDE.html](./docs/WORKFLOW_GUIDE.html) in any browser (offline, no server required) for a searchable handbook of all 14 features, 1-click copyable commands, and collapsible technical detail panels.
+
+See [DEPLOY_WORKFLOW.md](./DEPLOY_WORKFLOW.md) for the exact step-by-step setup, local smoke test, daily shipping loop, local `pre-commit`/`pre-push` branch locks (`scripts/branch_guard.py`), and 2-minute switch to server-enforced GitHub Issues & Actions. For multi-thousand-line legacy scripts, see [LEGACY_REFACTORING_PLAYBOOK.md](./LEGACY_REFACTORING_PLAYBOOK.md) and [docs/EASY_TO_CHANGE_GUIDE.md](./docs/EASY_TO_CHANGE_GUIDE.md). For Level 2 Goal Autonomy, Overnight Architecture Bots, Parallel Prototype Bake-Offs, Confidence Grading, and Agent Trust, see [docs/AUTONOMY_AND_BOTS_GUIDE.md](./docs/AUTONOMY_AND_BOTS_GUIDE.md).
 
 ```bash
 # 1. Python venv + dev tooling

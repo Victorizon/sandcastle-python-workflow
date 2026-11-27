@@ -1,0 +1,1188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sandcastle Python Workflow — Interactive Field Guide</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --surface: #ffffff;
+      --surface-soft: #f1f5f9;
+      --border: #e2e8f0;
+      --border-strong: #cbd5e1;
+      --text: #0f172a;
+      --text-soft: #334155;
+      --muted: #64748b;
+      --indigo: #4f46e5;
+      --indigo-soft: #eef2ff;
+      --emerald: #059669;
+      --emerald-soft: #ecfdf5;
+      --amber: #d97706;
+      --amber-soft: #fffbeb;
+      --rose: #dc2626;
+      --rose-soft: #fef2f2;
+      --sky: #0284c7;
+      --sky-soft: #f0f9ff;
+      --violet: #7c3aed;
+      --violet-soft: #f5f3ff;
+      --code-bg: #0f172a;
+      --code-text: #e2e8f0;
+      --radius: 14px;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.05), 0 4px 14px rgba(15, 23, 42, 0.04);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      background: rgba(248, 250, 252, 0.92);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 15px;
+      letter-spacing: -0.02em;
+    }
+    .brand-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, var(--indigo), var(--emerald));
+      box-shadow: 0 0 0 4px var(--indigo-soft);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      justify-content: flex-end;
+    }
+    .search-box {
+      min-width: 240px;
+      max-width: 340px;
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      font-size: 13.5px;
+      color: var(--text);
+      outline: none;
+    }
+    .search-box:focus {
+      border-color: var(--indigo);
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.14);
+    }
+    .btn {
+      padding: 7px 12px;
+      border-radius: 9px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text-soft);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn:hover { background: var(--surface-soft); color: var(--text); }
+    .btn.primary {
+      background: var(--indigo);
+      border-color: var(--indigo);
+      color: #fff;
+    }
+    .btn.primary:hover { background: #4338ca; }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 72px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #ffffff 0%, #eef2ff 55%, #ecfdf5 100%);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px 28px 24px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+    }
+    .hero-kicker {
+      display: inline-block;
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--indigo);
+      background: rgba(79, 70, 229, 0.1);
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      letter-spacing: -0.03em;
+      line-height: 1.18;
+    }
+    .hero p {
+      margin: 0 0 18px;
+      color: var(--text-soft);
+      font-size: 15px;
+      max-width: 820px;
+    }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    .stat-pill {
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .stat-pill .num {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .stat-pill .lbl {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 22px;
+      box-shadow: var(--shadow);
+      margin-bottom: 22px;
+    }
+    .panel h2 {
+      margin: 0 0 4px;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+    .panel-sub {
+      margin: 0 0 14px;
+      font-size: 13.5px;
+      color: var(--muted);
+    }
+
+    /* Lifecycle SVG */
+    .flow-wrap {
+      overflow-x: auto;
+      padding: 6px 0 2px;
+    }
+    .flow-svg {
+      width: 100%;
+      min-width: 860px;
+      height: auto;
+      display: block;
+    }
+
+    /* Quick Command Picker */
+    .cheat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 10px;
+    }
+    .cheat-item {
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 11px 13px;
+      background: #fcfdff;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .cheat-goal {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .cmd-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      border-radius: 8px;
+      padding: 7px 9px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.8px;
+      overflow-x: auto;
+    }
+    .cmd-row code { white-space: nowrap; }
+    .copy-btn {
+      flex-shrink: 0;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      background: rgba(255, 255, 255, 0.08);
+      color: #f8fafc;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: rgba(255, 255, 255, 0.2); }
+
+    /* Category Filter Pills */
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 22px 0 16px;
+      align-items: center;
+    }
+    .pill {
+      padding: 7px 13px;
+      border-radius: 999px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface);
+      color: var(--text-soft);
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .pill:hover { border-color: var(--indigo); color: var(--indigo); }
+    .pill.active {
+      background: var(--indigo);
+      border-color: var(--indigo);
+      color: #fff;
+    }
+    .match-count {
+      margin-left: auto;
+      font-size: 12.5px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    /* Feature Grid */
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(490px, 1fr));
+      gap: 16px;
+    }
+    @media (max-width: 600px) {
+      .feature-grid { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .card:hover { border-color: #c7d2fe; }
+    .card.hidden { display: none; }
+
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 3px 9px;
+      border-radius: 999px;
+    }
+    .tag.gates { background: var(--emerald-soft); color: var(--emerald); }
+    .tag.autonomy { background: var(--indigo-soft); color: var(--indigo); }
+    .tag.trust { background: var(--violet-soft); color: var(--violet); }
+    .tag.reports { background: var(--sky-soft); color: var(--sky); }
+    .tag.daily { background: var(--amber-soft); color: var(--amber); }
+    .tag.legacy { background: var(--rose-soft); color: var(--rose); }
+
+    .det-chip {
+      font-size: 11px;
+      font-weight: 700;
+      color: #065f46;
+      background: #d1fae5;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+    .det-chip.hybrid {
+      color: #3730a3;
+      background: #e0e7ff;
+    }
+
+    .card h3 {
+      margin: 0;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+    .card-desc {
+      margin: 0;
+      font-size: 13.8px;
+      color: var(--text-soft);
+    }
+    .when-box {
+      font-size: 12.8px;
+      background: var(--surface-soft);
+      border-left: 3px solid var(--indigo);
+      padding: 8px 11px;
+      border-radius: 0 8px 8px 0;
+      color: var(--text-soft);
+    }
+    .when-box strong { color: var(--text); }
+
+    /* Technical Dropdown */
+    details.tech {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fafcff;
+      overflow: hidden;
+      margin-top: 2px;
+    }
+    details.tech summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 9px 12px;
+      font-size: 12.8px;
+      font-weight: 700;
+      color: var(--indigo);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      user-select: none;
+      background: #f8faff;
+    }
+    details.tech summary::-webkit-details-marker { display: none; }
+    details.tech summary::after {
+      content: "▸";
+      font-size: 14px;
+      transition: transform 0.15s ease;
+    }
+    details.tech[open] summary::after { transform: rotate(90deg); }
+    details.tech[open] summary { border-bottom: 1px solid var(--border); }
+
+    .tech-body {
+      padding: 12px 14px;
+      font-size: 13px;
+      color: var(--text-soft);
+    }
+    .tech-body ul {
+      margin: 0 0 10px;
+      padding-left: 18px;
+    }
+    .tech-body li { margin-bottom: 5px; }
+    .tech-body code {
+      background: #e2e8f0;
+      color: #0f172a;
+      padding: 1px 5px;
+      border-radius: 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .tech-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 10px;
+      font-size: 12.2px;
+    }
+    .tech-table th, .tech-table td {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .tech-table th {
+      background: var(--surface-soft);
+      font-weight: 700;
+      color: var(--text);
+    }
+    .file-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+    .file-pill {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11.2px;
+      background: var(--surface);
+      border: 1px solid var(--border-strong);
+      color: var(--text-soft);
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+
+    .badge-table {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .badge-card {
+      border-radius: 10px;
+      padding: 11px 13px;
+      border: 1px solid var(--border);
+    }
+    .badge-card.green { background: var(--emerald-soft); border-color: #a7f3d0; }
+    .badge-card.blue { background: var(--sky-soft); border-color: #bae6fd; }
+    .badge-card.amber { background: var(--amber-soft); border-color: #fde68a; }
+    .badge-card.red { background: var(--rose-soft); border-color: #fecaca; }
+    .badge-card .b-title { font-weight: 800; font-size: 13.5px; margin-bottom: 3px; }
+    .badge-card .b-desc { font-size: 12.2px; color: var(--text-soft); }
+
+    footer {
+      margin-top: 34px;
+      text-align: center;
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+
+    @media print {
+      .topbar, .filters, .copy-btn, .no-print { display: none !important; }
+      body { background: #fff; }
+      .card, .panel { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar no-print">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-dot"></span>
+        <span>Sandcastle Python Workflow · Interactive Field Guide</span>
+      </div>
+      <div class="controls">
+        <input id="search" class="search-box" type="search" placeholder="Search features, commands, files (e.g. hypothesis, bakeoff, trust)..." />
+        <button id="expand-all" class="btn" type="button">Expand All Details</button>
+        <button id="collapse-all" class="btn" type="button">Collapse All</button>
+        <button onclick="window.print()" class="btn primary" type="button">Print / Save PDF</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- HERO -->
+    <section class="hero">
+      <span class="hero-kicker">Offline Living Handbook · Matt Pocock + Sandcastle + Codex</span>
+      <h1>Everything Built Into Your Deterministic Python Workflow</h1>
+      <p>
+        Open this page anytime you want to recall a feature, copy an exact command, or inspect the mechanical rules
+        enforced underneath. Every card starts in plain English and opens a <strong>Technical Details</strong> dropdown
+        with exact files, thresholds, safety caps, and failure behaviors.
+      </p>
+      <div class="hero-stats">
+        <div class="stat-pill"><div class="num">6 Gates</div><div class="lbl">Mechanical Python Proof + Hypothesis</div></div>
+        <div class="stat-pill"><div class="num">5 Modes</div><div class="lbl">Factory · Goal · Nightly · Bake-Off · Tune</div></div>
+        <div class="stat-pill"><div class="num">0–100</div><div class="lbl">Deterministic Confidence + Action Badges</div></div>
+        <div class="stat-pill"><div class="num">1-Click Jira</div><div class="lbl">Auto-Styled PM HTML Reports (0 Tokens)</div></div>
+      </div>
+    </section>
+
+    <!-- VISUAL LIFECYCLE -->
+    <section class="panel">
+      <h2>End-to-End Autonomous Lifecycle</h2>
+      <p class="panel-sub">Control lives in deterministic TypeScript &amp; Python code — Codex works inside bounded Docker containers.</p>
+      <div class="flow-wrap">
+        <svg class="flow-svg" viewBox="0 0 1040 155" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="6-stage autonomous workflow diagram">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="#94a3b8" />
+            </marker>
+          </defs>
+          <!-- Connectors -->
+          <line x1="162" y1="74" x2="180" y2="74" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+          <line x1="336" y1="74" x2="354" y2="74" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+          <line x1="510" y1="74" x2="528" y2="74" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+          <line x1="684" y1="74" x2="702" y2="74" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+          <line x1="858" y1="74" x2="876" y2="74" stroke="#94a3b8" stroke-width="2" marker-end="url(#arrow)" />
+
+          <!-- Step 1 -->
+          <rect x="6" y="18" width="156" height="114" rx="14" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" />
+          <text x="20" y="40" fill="#b45309" font-size="11" font-weight="700">1. SHAPE</text>
+          <text x="20" y="61" fill="#0f172a" font-size="13.5" font-weight="800">/grill-me + Spec</text>
+          <text x="20" y="81" fill="#475569" font-size="11.2">Freeze REQ / INV / OUT</text>
+          <text x="20" y="97" fill="#475569" font-size="11.2">in docs/specs/*.md &amp;</text>
+          <text x="20" y="113" fill="#475569" font-size="11.2">vertical slice tickets</text>
+
+          <!-- Step 2 -->
+          <rect x="180" y="18" width="156" height="114" rx="14" fill="#eef2ff" stroke="#a5b4fc" stroke-width="1.5" />
+          <text x="194" y="40" fill="#4338ca" font-size="11" font-weight="700">2. PROTOTYPE</text>
+          <text x="194" y="61" fill="#0f172a" font-size="13.5" font-weight="800">Optional Bake-Off</text>
+          <text x="194" y="81" fill="#475569" font-size="11.2">3 forked architectures</text>
+          <text x="194" y="97" fill="#475569" font-size="11.2">scored by gates + judge</text>
+          <text x="194" y="113" fill="#475569" font-size="11.2">before committing</text>
+
+          <!-- Step 3 -->
+          <rect x="354" y="18" width="156" height="114" rx="14" fill="#f0f9ff" stroke="#7dd3fc" stroke-width="1.5" />
+          <text x="368" y="40" fill="#0369a1" font-size="11" font-weight="700">3. BUILD</text>
+          <text x="368" y="61" fill="#0f172a" font-size="13.5" font-weight="800">Docker + Watchdog</text>
+          <text x="368" y="81" fill="#475569" font-size="11.2">Isolated worktrees,</text>
+          <text x="368" y="97" fill="#475569" font-size="11.2">live DriftWatchdog,</text>
+          <text x="368" y="113" fill="#475569" font-size="11.2">1-shot auto-split</text>
+
+          <!-- Step 4 -->
+          <rect x="528" y="18" width="156" height="114" rx="14" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5" />
+          <text x="542" y="40" fill="#047857" font-size="11" font-weight="700">4. PROVE</text>
+          <text x="542" y="61" fill="#0f172a" font-size="13.5" font-weight="800">6 Gates + Fuzzing</text>
+          <text x="542" y="81" fill="#475569" font-size="11.2">Ratchet, boundaries,</text>
+          <text x="542" y="97" fill="#475569" font-size="11.2">test_guard, mutation,</text>
+          <text x="542" y="113" fill="#475569" font-size="11.2">Hypothesis 50–300x</text>
+
+          <!-- Step 5 -->
+          <rect x="702" y="18" width="156" height="114" rx="14" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.5" />
+          <text x="716" y="40" fill="#6d28d9" font-size="11" font-weight="700">5. AUDIT</text>
+          <text x="716" y="61" fill="#0f172a" font-size="13.5" font-weight="800">Fresh Two-Axis</text>
+          <text x="716" y="81" fill="#475569" font-size="11.2">Spec vs. Standards,</text>
+          <text x="716" y="97" fill="#475569" font-size="11.2">End-of-Goal Spec Audit</text>
+          <text x="716" y="113" fill="#475569" font-size="11.2">verified vs. pytest -v</text>
+
+          <!-- Step 6 -->
+          <rect x="876" y="18" width="158" height="114" rx="14" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" />
+          <text x="890" y="40" fill="#b91c1c" font-size="11" font-weight="700">6. SCORE &amp; SHIP</text>
+          <text x="890" y="61" fill="#0f172a" font-size="13.5" font-weight="800">Report + Trust</text>
+          <text x="890" y="81" fill="#475569" font-size="11.2">0–100 Action Badge,</text>
+          <text x="890" y="97" fill="#475569" font-size="11.2">PM HTML + 1-Click Jira,</text>
+          <text x="890" y="113" fill="#475569" font-size="11.2">Agent Trust + Tuner</text>
+        </svg>
+      </div>
+    </section>
+
+    <!-- QUICK COMMAND PICKER -->
+    <section class="panel">
+      <h2>"Which Command Should I Run?" Quick Cheat Sheet</h2>
+      <p class="panel-sub">Click Copy on any command below to run it directly from your repo root in WSL2.</p>
+      <div class="cheat-grid">
+        <div class="cheat-item">
+          <div class="cheat-goal">Verify all 5 workflow layers before shipping</div>
+          <div class="cmd-row"><code>python scripts/verify_workflow_ready.py</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Run all 6 Python checks (+ Hypothesis fuzzing)</div>
+          <div class="cmd-row"><code>python scripts/check.py</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Run deep 300-case fuzzing on parser refactors</div>
+          <div class="cmd-row"><code>HYPOTHESIS_PROFILE=deep python scripts/check.py</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">View local Kanban ticket board</div>
+          <div class="cmd-row"><code>python scripts/local_tracker.py board</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Ship queued slices autonomously (Level 1 Factory + Live Dashboard)</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run factory</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Run Level 2 Goal Autonomy until goal.json &amp; spec pass</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run goal -- --goal .sandcastle/goal.json --max-minutes 0</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Compare 3 competing architectures (Prototype Bake-Off)</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run bakeoff -- --slug parser-v2 --brief "Extract parser"</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Propose 1–2 overnight architecture improvements</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run nightly-arch -- --mode tickets</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Check live Agent Trust Score &amp; Autonomy Tier (0 LLM calls)</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run trust</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Log 5-second Human Reality Check on last run</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run rate -- --latest --verdict good</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Propose safety-clamped parameter tuning (requires 10+ runs)</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run tune</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Run real-Docker synthetic E2E + preview live dashboard</div>
+          <div class="cmd-row"><code>DASHBOARD_KEEP_OPEN_SEC=60 npm --prefix .sandcastle run e2e</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FILTER BAR -->
+    <div class="filters no-print" role="tablist" aria-label="Filter workflow features by category">
+      <button class="pill active" data-cat="all" type="button">All Features</button>
+      <button class="pill" data-cat="daily" type="button">Daily Workflow</button>
+      <button class="pill" data-cat="gates" type="button">Quality Gates</button>
+      <button class="pill" data-cat="autonomy" type="button">Autonomy &amp; Bots</button>
+      <button class="pill" data-cat="trust" type="button">Confidence &amp; Trust</button>
+      <button class="pill" data-cat="reports" type="button">Reports &amp; Tuning</button>
+      <button class="pill" data-cat="legacy" type="button">Legacy Refactoring</button>
+      <span id="match-count" class="match-count">14 features shown</span>
+    </div>
+
+    <!-- FEATURE CARDS -->
+    <section id="feature-grid" class="feature-grid">
+
+      <!-- 1. HARNESS & DOCS -->
+      <article class="card" data-cat="daily" data-search="agents glossary adr coding standards mattpocock skills loop guards">
+        <div class="card-top">
+          <span class="tag daily">Daily Workflow · Layers 1 &amp; 2</span>
+          <span class="det-chip">Lean Context Harness</span>
+        </div>
+        <h3>1. AGENTS.md, Glossary, ADRs &amp; Reviewer-Only Standards</h3>
+        <p class="card-desc">
+          Gives Codex a tiny 34-line navigation map with explicit loop guards, ubiquitous domain vocabulary,
+          "why we did this" ADRs, and a strict <code>CODING_STANDARDS.md</code> shown only to Reviewers so implementers stay sharp.
+        </p>
+        <div class="when-box"><strong>When to update:</strong> Keep <code>GLOSSARY.md</code> to ~30–60 high-value domain terms (never 160+ dictionary entries). Add an ADR whenever you lock down a non-obvious rule.</div>
+        <details class="tech">
+          <summary>Technical Details — Loop Guards &amp; File Separation</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Codex loop guards in <code>AGENTS.md</code>:</strong> 2-strike retry ceiling, bounded grilling, fresh subagent contexts, default <code>medium</code> effort (reserve <code>high</code> for fresh review/audits).</li>
+              <li><strong>Withheld standards trick:</strong> <code>CODING_STANDARDS.md</code> is intentionally excluded from <code>implement-prompt.md</code> and fed only to <code>review-prompt.md</code> + <code>spec-audit-prompt.md</code> to prevent context bloat while keeping enforcement strict.</li>
+              <li><strong>Installed skills alignment:</strong> Matches <code>mattpocock/skills</code> v1.3.2 (<code>grilling</code>, <code>code-review</code>, <code>codebase-design</code>, <code>tdd</code>, <code>prototype</code>, <code>domain-modeling</code>, <code>diagnosing-bugs</code>).</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">AGENTS.md</span>
+              <span class="file-pill">GLOSSARY.md</span>
+              <span class="file-pill">CODING_STANDARDS.md</span>
+              <span class="file-pill">docs/adr/</span>
+              <span class="file-pill">docs/agents/</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 2. 6-GATE PYTHON VERIFICATION -->
+      <article class="card" data-cat="gates" data-search="check.py ruff pyright ratchet import-linter pytest test_guard mutation_check branch_guard">
+        <div class="card-top">
+          <span class="tag gates">Quality Gates · Brake 1</span>
+          <span class="det-chip">100% Deterministic</span>
+        </div>
+        <h3>2. 6-Gate Mechanical Python Verification</h3>
+        <p class="card-desc">
+          One command runs six un-gameable checks: formatting, monotonic lint/type/secret ratchet, architecture import boundaries,
+          public-seam coverage, AST anti-tampering test lock, and AST mutation testing.
+        </p>
+        <div class="cmd-row"><code>python scripts/check.py</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — All 6 Gates &amp; Anti-Cheat Rules</summary>
+          <div class="tech-body">
+            <table class="tech-table">
+              <thead><tr><th>#</th><th>Gate</th><th>What It Enforces</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td><code>ruff format --check</code></td><td>Zero formatting drift across <code>src/</code>, <code>tests/</code>, <code>tests_tooling/</code>, <code>scripts/</code>.</td></tr>
+                <tr><td>2</td><td><code>scripts/ratchet.py</code></td><td>Ruff + <code>pyright --strict</code> (with active <code>--pythonpath</code>) + bans <code># noqa</code> / <code># type: ignore</code> + bans direct SDK imports + secret/token scan. Baseline only shrinks.</td></tr>
+                <tr><td>3</td><td><code>import-linter</code></td><td>Forbids <code>app.processors</code> from importing third-party SDKs directly (must go through <code>app.adapters</code>).</td></tr>
+                <tr><td>4</td><td><code>pytest --cov=src</code></td><td>Behavioral public-seam replay tests + Hypothesis fuzzing + JSON coverage report.</td></tr>
+                <tr><td>5</td><td><code>scripts/test_guard.py</code></td><td>AST-compares <code>tests/</code> against <code>main</code>: blocks deleting/renaming tests, lowering assert counts, adding <code>skip</code>/<code>xfail</code>/<code>assert True</code>, editing historical fixtures, or dropping coverage below <code>coverage-baseline.json</code>.</td></tr>
+                <tr><td>6</td><td><code>scripts/mutation_check.py</code></td><td>Injects real logic &amp; fail-closed bugs into an isolated temp copy (<code>PYTHONDONTWRITEBYTECODE=1</code>) and requires <code>&gt;= 85%</code> mutant kill rate.</td></tr>
+              </tbody>
+            </table>
+            <p>Also includes local git hooks via <code>scripts/branch_guard.py</code> (blocks committing <code>src/</code> directly on <code>main</code>) and 11 adversarial self-tests in <code>tests_tooling/test_workflow_gates.py</code>.</p>
+            <div class="file-pills">
+              <span class="file-pill">scripts/check.py</span>
+              <span class="file-pill">scripts/ratchet.py</span>
+              <span class="file-pill">scripts/test_guard.py</span>
+              <span class="file-pill">scripts/mutation_check.py</span>
+              <span class="file-pill">scripts/branch_guard.py</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 3. HYPOTHESIS FUZZING -->
+      <article class="card" data-cat="gates" data-search="hypothesis property fuzzing parser conftest deep invariants">
+        <div class="card-top">
+          <span class="tag gates">Quality Gates · Parser Safety</span>
+          <span class="det-chip">100% Deterministic</span>
+        </div>
+        <h3>3. Hypothesis Property-Based Fuzzing</h3>
+        <p class="card-desc">
+          Acts like an automated chaos monkey inside <code>pytest</code>: generates 50 to 300 weird, unexpected inputs every run,
+          checks universal fail-closed invariants, and shrinks any crash to the tiniest failing reproducer.
+        </p>
+        <div class="cmd-row"><code>HYPOTHESIS_PROFILE=deep python scripts/check.py</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Profiles &amp; Strict-Mode Pattern</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong><code>default</code> profile (CI &amp; normal runs):</strong> <code>max_examples=50</code>, <code>derandomize=True</code>, <code>deadline=None</code> — fast, reproducible, and container-safe inside Docker.</li>
+              <li><strong><code>deep</code> profile (major parser refactors):</strong> <code>max_examples=300</code>, randomized exploration, <code>deadline=None</code>.</li>
+              <li><strong>Strict Ruff/Pyright pattern:</strong> Bundle strategy fields into a <code>@dataclass(frozen=True)</code> with <code>st.builds(...)</code> so tests stay at 1 parameter (zero <code>PLR0913</code>/<code>PLR0917</code> warnings and zero <code># type: ignore</code>).</li>
+              <li><strong>Agent instruction:</strong> Both <code>CODING_STANDARDS.md</code> and <code>.sandcastle/implement-prompt.md</code> require a <code>@given(...)</code> fail-closed test whenever a parser or decision rule is added or refactored.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">tests/conftest.py</span>
+              <span class="file-pill">tests/test_order_triage.py</span>
+              <span class="file-pill">requirements-dev.txt</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 4. LOCAL TRACKER & GITHUB SWITCHOVER -->
+      <article class="card" data-cat="daily" data-search="local_tracker board split github ci ratchet-shrink issues">
+        <div class="card-top">
+          <span class="tag daily">Daily Workflow · Layer 4</span>
+          <span class="det-chip">100% Deterministic</span>
+        </div>
+        <h3>4. Local-First Issue Tracker &amp; 2-Minute GitHub Switchover</h3>
+        <p class="card-desc">
+          Track slices locally in plain markdown under <code>.scratch/</code> with zero external accounts or API tokens —
+          and when ready, export tickets and enable server-enforced GitHub CI + automatic ratchet-shrink PRs.
+        </p>
+        <div class="cmd-row"><code>python scripts/local_tracker.py board</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Tracker CLI &amp; GitHub Workflows</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Commands:</strong> <code>board</code>, <code>list --status ready-for-agent --json</code>, <code>view &lt;id&gt;</code>, <code>comment</code>, <code>set-status</code>, <code>resolve</code>, <code>split &lt;id&gt; --plan-json -</code>, and <code>export-github</code>.</li>
+              <li><strong>GitHub Actions ready out of the box:</strong> <code>.github/workflows/ci.yml</code> runs all 6 Python gates + 11 tooling tests + TypeScript checks on every push/PR; <code>ratchet-shrink.yml</code> opens PRs whenever tech debt shrinks.</li>
+              <li><strong>GitHub checkbox reminder:</strong> Enable <em>Allow GitHub Actions to create and approve pull requests</em> in repo Settings → Actions → General.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">scripts/local_tracker.py</span>
+              <span class="file-pill">.github/workflows/ci.yml</span>
+              <span class="file-pill">.github/workflows/ratchet-shrink.yml</span>
+              <span class="file-pill">DEPLOY_WORKFLOW.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 5. LEVEL 1 FACTORY + DRIFT WATCHDOG -->
+      <article class="card" data-cat="autonomy" data-search="factory run.ts docker drift watchdog abortcontroller decomposer split reviewer">
+        <div class="card-top">
+          <span class="tag autonomy">Autonomy · Level 1 Factory</span>
+          <span class="det-chip hybrid">Deterministic Outer Loop</span>
+        </div>
+        <h3>5. Level 1 Autonomous Factory &amp; Real-Time DriftWatchdog</h3>
+        <p class="card-desc">
+          Picks unblocked tickets, spawns isolated Docker containers with Codex, monitors every tool call in real time for thrashing or runaway diffs,
+          auto-splits oversized tickets once, verifies all 6 gates, and runs a fresh-context Adversarial Reviewer before merging.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run factory</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Hard Caps, Drift Tripwires &amp; Auto-Split</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Outer caps:</strong> <code>MAX_OUTER_CYCLES=6</code>, <code>MAX_PARALLEL=2</code>, <code>MAX_IMPLEMENT_ITERATIONS=4</code>, <code>MAX_VERIFY_RETRIES=2</code>, <code>MAX_REVIEW_ROUNDS=2</code>, <code>MAX_AUTO_SPLITS=1</code>.</li>
+              <li><strong>Live <code>AbortController</code> tripwires (<code>drift-watchdog.ts</code>):</strong>
+                <ul>
+                  <li>Wall-clock cap: <code>DRIFT_MAX_MINUTES=20</code></li>
+                  <li>Total tool-call cap: <code>DRIFT_MAX_TOOL_CALLS=45</code></li>
+                  <li>Thrash detector: <code>DRIFT_MAX_REPEATED_TOOLS=6</code> identical tool calls</li>
+                  <li>Post-run blast radius: <code>DRIFT_MAX_DIFF_LINES=300</code>, <code>DRIFT_MAX_DIFF_FILES=6</code></li>
+                  <li>Context-rot guard: <code>DRIFT_MAX_CONTEXT_RATIO=0.75</code></li>
+                </ul>
+              </li>
+              <li><strong>1-shot remediation:</strong> When drift trips at depth 0, wakes <code>decompose-prompt.md</code> to split into 2–3 smaller slices via <code>local_tracker.py split</code>. At depth 1, escalates cleanly to <code>ready-for-human</code>.</li>
+              <li><strong>Container isolation:</strong> Pre-baked <code>sandcastle:python-codex</code> Docker image with <code>/opt/venv</code> symlinked into <code>/usr/local/bin</code> and read-only <code>~/.codex/auth.json</code> mount.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/run.ts</span>
+              <span class="file-pill">.sandcastle/drift-watchdog.ts</span>
+              <span class="file-pill">.sandcastle/Dockerfile</span>
+              <span class="file-pill">.sandcastle/review-prompt.md</span>
+              <span class="file-pill">.sandcastle/decompose-prompt.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 6. LIVE PM MISSION CONTROL DASHBOARD -->
+      <article class="card" data-cat="reports" data-search="dashboard sse mission control 4311 journey map e2e synthetic">
+        <div class="card-top">
+          <span class="tag reports">Visibility · Live UI</span>
+          <span class="det-chip">100% Deterministic UI</span>
+        </div>
+        <h3>6. Live PM Mission Control Dashboard &amp; Synthetic E2E</h3>
+        <p class="card-desc">
+          Opens automatically at <code>http://127.0.0.1:4311</code> during factory runs. Translates raw Codex tool streams into plain-English PM updates
+          with an animated Slice Journey Map showing challenge/fix detours and drift auto-split forks live.
+        </p>
+        <div class="cmd-row"><code>DASHBOARD_KEEP_OPEN_SEC=60 npm --prefix .sandcastle run e2e</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — SSE Architecture &amp; Synthetic Test</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Zero external frontend build:</strong> Self-contained Node HTTP + Server-Sent Events (<code>/events</code>, <code>/state</code>) server bound strictly to localhost (<code>127.0.0.1:4311</code>).</li>
+              <li><strong>Interactive Journey Map:</strong> Click any slice token to focus its path, inspect amber Challenge/Fix detour loops, violet Drift Auto-Split forks, coverage %, and mutation kill rate.</li>
+              <li><strong>Zero-LLM E2E harness (<code>e2e-synthetic.ts</code>):</strong> Proves the full Docker container, <code>DriftWatchdog</code> thrash abort, <code>local_tracker.py split</code>, and <code>test_guard.py</code> cheat block end-to-end without spending Codex quota.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/dashboard.ts</span>
+              <span class="file-pill">.sandcastle/dashboard-ui.ts</span>
+              <span class="file-pill">.sandcastle/e2e-synthetic.ts</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 7. LEVEL 2 GOAL AUTONOMY -->
+      <article class="card" data-cat="autonomy" data-search="goal autonomy level 2 gap planner max-minutes unlimited receipt">
+        <div class="card-top">
+          <span class="tag autonomy">Autonomy · Level 2 Goal</span>
+          <span class="det-chip hybrid">Goal-Driven Loop</span>
+        </div>
+        <h3>7. Level 2 Goal-Driven Autonomy &amp; Gap-Planner</h3>
+        <p class="card-desc">
+          Runs factory cycles autonomously until every machine-verifiable command in <code>goal.json</code> passes and every ticket is resolved.
+          If tickets run out before checks turn green, wakes a bounded Gap-Planner to create follow-up tickets automatically.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run goal -- --goal .sandcastle/goal.json --max-minutes 0</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Configurable Time Caps &amp; Circuit Breakers</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Configurable wall-clock cap:</strong> Set <code>--max-minutes 240</code> for a 4-hour run, or <code>--max-minutes 0</code> (or <code>GOAL_MAX_MINUTES=0</code>) for unlimited wall-clock time when you have large Codex capacity.</li>
+              <li><strong>Safety circuit breakers:</strong> Still halts cleanly on <code>maxStalledCycles</code> (consecutive cycles with no new commits), <code>maxGapPlanRounds</code> exhausted, or any <code>ready-for-human</code> escalation.</li>
+              <li><strong>Verifiable output:</strong> Writes <code>.sandcastle/logs/goal-receipt-&lt;slug&gt;.json</code> (with HEAD commit, command exit codes, and deterministic confidence score) + a styled PM HTML &amp; Jira report.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/goal.ts</span>
+              <span class="file-pill">.sandcastle/goal-core.ts</span>
+              <span class="file-pill">.sandcastle/goal.example.json</span>
+              <span class="file-pill">.sandcastle/gap-plan-prompt.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 8. GRILLING SPEC CONTRACT + END-OF-GOAL SPEC AUDIT -->
+      <article class="card" data-cat="trust" data-search="grill spec contract req inv out audit pytest cross-check traceability">
+        <div class="card-top">
+          <span class="tag trust">Confidence &amp; Trust · Spec Proof</span>
+          <span class="det-chip hybrid">Auditor + Deterministic Proof</span>
+        </div>
+        <h3>8. Frozen <code>/grill-me</code> Spec Contracts &amp; End-of-Goal Audit</h3>
+        <p class="card-desc">
+          Saves your agreed <code>/grill-me</code> decisions as numbered <code>REQ-*</code>, <code>INV-*</code>, and <code>OUT-*</code> items.
+          When a Goal completes, a fresh Spec Auditor maps each item to code and a test — and TypeScript cross-checks every cited test against real <code>pytest -v</code> output.
+        </p>
+        <div class="when-box"><strong>Why it matters:</strong> Catches cross-slice drift, silently dropped requirements, scope creep, and hallucinated test names before you ever merge.</div>
+        <details class="tech">
+          <summary>Technical Details — How Deterministic Cross-Verification Works</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Step 1:</strong> Copy <code>docs/specs/TEMPLATE.md</code> to <code>docs/specs/&lt;slug&gt;.md</code> and set <code>"specFile"</code> in <code>goal.json</code>.</li>
+              <li><strong>Step 2:</strong> At Goal completion, <code>goal.ts</code> runs <code>pytest -v</code> to collect exact passing test IDs and runs 1 fresh-context audit against <code>git diff &lt;startCommit&gt;..HEAD</code>.</li>
+              <li><strong>Step 3 (100% deterministic TypeScript):</strong> The auditor <em>never</em> picks a score or badge. <code>verifySpecAuditAgainstTests()</code> checks that:
+                <ul>
+                  <li>Every <code>REQ-*</code> / <code>INV-*</code> / <code>OUT-*</code> ID appears (omitted IDs become <code>MISSING</code> → hard block).</li>
+                  <li>Every <code>VERIFIED</code> row cites a test that literally passed in <code>pytest -v</code> (fake/unrun tests are downgraded automatically).</li>
+                  <li>Cited files actually exist on disk.</li>
+                </ul>
+              </li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">docs/specs/TEMPLATE.md</span>
+              <span class="file-pill">docs/specs/order-triage-example.md</span>
+              <span class="file-pill">.sandcastle/spec-audit-prompt.md</span>
+              <span class="file-pill">.sandcastle/confidence.ts</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 9. OVERNIGHT ARCHITECTURE BOT -->
+      <article class="card" data-cat="autonomy" data-search="nightly-arch overnight architecture bot churn hotspots deep module">
+        <div class="card-top">
+          <span class="tag autonomy">Autonomy · Overnight Bot</span>
+          <span class="det-chip hybrid">Churn-Scoped Proposals</span>
+        </div>
+        <h3>9. Overnight Architecture Bot (1–2 High-ROI Proposals/Night)</h3>
+        <p class="card-desc">
+          Scans git commit history to find the files you actually touch most (high-churn hotspots) and proposes 1–2 deep-module
+          refactoring improvements overnight — never touching stable, untouched code.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run nightly-arch -- --mode tickets</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Two Safe Modes (Tickets vs. Draft Branch)</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Default <code>--mode tickets</code> (safest):</strong> Zero source edits. Writes 1–2 proposals as <code>needs-triage</code> tickets in <code>.scratch/</code> plus a styled PM HTML report. You promote only the winners to <code>ready-for-agent</code>.</li>
+              <li><strong>Optional <code>--mode draft-branch</code>:</strong> Builds each proposal on an isolated <code>arch-bot/YYYY-MM-DD-&lt;slug&gt;</code> branch and discards any branch that fails <code>python scripts/check.py</code>.</li>
+              <li><strong>Churn ranking:</strong> Deterministic git-log analyzer ranks Python files under <code>src/</code> by recent touch frequency so the bot focuses strictly on active pain points.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/nightly-arch.ts</span>
+              <span class="file-pill">.sandcastle/nightly-arch-prompt.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 10. PARALLEL PROTOTYPE BAKE-OFF -->
+      <article class="card" data-cat="autonomy" data-search="bakeoff prototype design it twice fork variants adversarial judge">
+        <div class="card-top">
+          <span class="tag autonomy">Autonomy · Design It Twice</span>
+          <span class="det-chip hybrid">3x Fork + Fresh Judge</span>
+        </div>
+        <h3>10. Parallel Prototype Bake-Off (3 Competing Architectures)</h3>
+        <p class="card-desc">
+          Automates Matt's "Prototype / Design It Twice" workflow: forks 3 competing design variants in parallel Docker branches,
+          scores each deterministically on 6 gates + mutation kill + brevity, and lets a fresh Adversarial Judge pick the winner or best hybrid.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run bakeoff -- --slug parser-v2 --brief "Extract parser"</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — 3 Variant Personas &amp; Deterministic Ranking</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Shared exploration via <code>parent.fork()</code>:</strong> One read-only Scout explores the repo once, then forks 3 isolated builders:
+                <ul>
+                  <li><strong>Variant A:</strong> Minimal Deep Module (tiny surface area, fewest moving parts)</li>
+                  <li><strong>Variant B:</strong> Explicit Pipeline / Data-Flow (clear typed stages)</li>
+                  <li><strong>Variant C:</strong> Strict Boundary / Extensible Strategy (plug-in adapters)</li>
+                </ul>
+              </li>
+              <li><strong>Deterministic score formula:</strong> Rewards passing all 6 gates, higher coverage &amp; mutation kill %, and penalizes bloated diffs.</li>
+              <li><strong>Never auto-merges:</strong> Outputs branches + comparison report + PM HTML/Jira summary so you pick the winning architecture deliberately.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/bakeoff.ts</span>
+              <span class="file-pill">.sandcastle/bakeoff-variant-prompt.md</span>
+              <span class="file-pill">.sandcastle/bakeoff-judge-prompt.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 11. DETERMINISTIC CONFIDENCE GRADING -->
+      <article class="card" data-cat="trust" data-search="confidence 0-100 action badge spot-check quick review carefully blocked hard caps">
+        <div class="card-top">
+          <span class="tag trust">Confidence &amp; Trust · Per Run &amp; Goal</span>
+          <span class="det-chip">100% Deterministic</span>
+        </div>
+        <h3>11. Deterministic Confidence Grading (0–100 + Action Badges)</h3>
+        <p class="card-desc">
+          Replaces unreliable LLM self-ratings with exact TypeScript math and strict hard caps so a high lint score can never hide
+          a test-tamper attempt, drift split, or missing spec item.
+        </p>
+        <div class="badge-table">
+          <div class="badge-card green"><div class="b-title">90–100 · Spot-Check Ready</div><div class="b-desc">Clean 6-gate pass, 90%+ mutation, 0 tampering, 0 drift, spec verified.</div></div>
+          <div class="badge-card blue"><div class="b-title">75–89 · Quick Review</div><div class="b-desc">All gates green with light friction (e.g., 1 review fix round).</div></div>
+          <div class="badge-card amber"><div class="b-title">50–74 · Review Carefully</div><div class="b-desc">Hard-capped due to tamper attempt, drift split, scope creep, or huge diff.</div></div>
+          <div class="badge-card red"><div class="b-title">0–49 · Blocked — Do Not Ship</div><div class="b-desc">Failed gate, missing spec item, or unresolved Standards violation.</div></div>
+        </div>
+        <details class="tech">
+          <summary>Technical Details — Hard Cap &amp; Deduction Table</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Hard Blocks (<code>Blocked — Do Not Ship</code>):</strong> Failed <code>check.py</code> or escalated slice (cap 35), any missing spec item (cap 40), any unresolved Standards violation (cap 45).</li>
+              <li><strong>Risk Caps (<code>Review Carefully</code>):</strong> Recovered <code>test_guard</code> tamper block (cap 65), violated <code>OUT-*</code> non-goal (cap 68), hallucinated cited test (cap 70), mutation <code>&lt; 85%</code> (cap 70), drift split or scope creep (cap 72), diff <code>&gt; 400</code> lines (cap 74).</li>
+              <li><strong>Deductions:</strong> Mutation 85–89% (-5), coverage &lt; 95% (-8), adversarial fix rounds (-6 each, max -18), diff 251–400 lines (-4), context &gt; 75% (-8).</li>
+              <li><strong>Factory blend:</strong> Overall factory score blends 60% average slice + 40% worst slice so a single weak slice always stands out.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/confidence.ts</span>
+              <span class="file-pill">.sandcastle/confidence.test.ts</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 12. AGENT TRUST SCORE, HUMAN RATE & SELF-TUNER -->
+      <article class="card" data-cat="trust" data-search="trust rate tune 10 runs autonomy tier supervised factory goal human reality check">
+        <div class="card-top">
+          <span class="tag trust">Confidence &amp; Trust · Earned Autonomy</span>
+          <span class="det-chip">100% Deterministic Trust</span>
+        </div>
+        <h3>12. Agent Trust Score, Human Reality Check &amp; Parameter Tuner</h3>
+        <p class="card-desc">
+          Tracks rolling trust across your verified local runs + optional 5-second post-review ratings (<code>good</code> / <code>tweak</code> / <code>rework</code>),
+          tells you which Autonomy Tier your harness has earned, and unlocks safety-clamped parameter tuning after 10+ verified runs.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run trust</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Autonomy Tiers, 10-Run Lock &amp; Safety Clamps</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>5 Trust Dimensions (rolling last 20 verified runs):</strong> Integrity Rate (zero tamper attempts), Delivery Rate, First-Pass Rate, Stability Rate (zero drift/escalation), and Human Approval Rate (<code>good=100%</code>, <code>tweak=60%</code>, <code>rework=0%</code>).</li>
+              <li><strong>Autonomy Readiness Tiers:</strong>
+                <ul>
+                  <li><strong>Supervised Only:</strong> <code>&lt; 10</code> verified runs, trust <code>&lt; 70</code>, or integrity <code>&lt; 95%</code>.</li>
+                  <li><strong>Factory Ready (Level 1):</strong> <code>&gt;= 10</code> runs, trust <code>70–84</code>, integrity <code>&gt;= 95%</code>.</li>
+                  <li><strong>Goal Autonomy Ready (Level 2):</strong> <code>&gt;= 10</code> runs, trust <code>&gt;= 85</code>, integrity <code>&gt;= 98%</code>, and human approval <code>&gt;= 85%</code> (if rated).</li>
+                </ul>
+              </li>
+              <li><strong>Diagnostic Lever:</strong> Automatically pinpoints the single lowest dimension and tells you which harness control to tighten (specs, slice size, fixtures, or prompts).</li>
+              <li><strong>Parameter Tuner (<code>npm --prefix .sandcastle run tune</code>):</strong> Hard-blocked until <code>&gt;= 10</code> local <code>.sandcastle/logs/runs/*.json</code> files physically exist and parse validly; read-only proposals clamped inside strict numeric bounds; ingests your <code>rate --note</code> feedback automatically.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/trust.ts</span>
+              <span class="file-pill">.sandcastle/rate.ts</span>
+              <span class="file-pill">.sandcastle/run-history.ts</span>
+              <span class="file-pill">.sandcastle/tuner.ts</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 13. PM HTML + 1-CLICK JIRA REPORTS -->
+      <article class="card" data-cat="reports" data-search="pm report html jira markup pdf offline executive">
+        <div class="card-top">
+          <span class="tag reports">Reports &amp; Tuning · Stakeholder Comms</span>
+          <span class="det-chip">Zero Tokens · Auto-Generated</span>
+        </div>
+        <h3>13. Automatic Styled PM HTML &amp; 1-Click Jira Reports</h3>
+        <p class="card-desc">
+          After every <code>factory</code>, <code>goal</code>, <code>nightly-arch</code>, <code>bakeoff</code>, <code>tune</code>, or <code>trust</code> run,
+          automatically writes an offline executive HTML report with a <strong>Copy Jira Markup</strong> button and Print/PDF layout.
+        </p>
+        <div class="when-box"><strong>Where reports live:</strong> <code>.sandcastle/logs/reports/&lt;kind&gt;-&lt;slug&gt;-YYYY-MM-DD.html</code> (gitignored locally so personal logs never pollute git).</div>
+        <details class="tech">
+          <summary>Technical Details — Built-In Actions &amp; Zero-Hallucination Design</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Why no extra "Documenter Agent":</strong> Deterministic rendering guarantees every commit SHA, coverage %, mutation score, spec row, and confidence badge is 100% factual at zero token cost.</li>
+              <li><strong>Header buttons on every report:</strong>
+                <ul>
+                  <li><code>Copy Jira Markup</code> — copies valid Jira wiki syntax (<code>h2.</code>, <code>{panel}</code>, <code>||Headers||</code>, <code>|rows|</code>) to your clipboard.</li>
+                  <li><code>Preview Jira Text</code> — toggles the raw Jira text inline if clipboard is blocked.</li>
+                  <li><code>Print / PDF</code> — clean print stylesheet with buttons hidden and cards protected from awkward page breaks.</li>
+                </ul>
+              </li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/pm-report.ts</span>
+              <span class="file-pill">.sandcastle/logs/reports/</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 14. LEGACY REFACTORING + EASY TO CHANGE + READINESS -->
+      <article class="card" data-cat="legacy" data-search="legacy refactoring playbook easy to change characterization fixtures strangler verify_workflow_ready">
+        <div class="card-top">
+          <span class="tag legacy">Legacy Refactoring · Playbooks</span>
+          <span class="det-chip">Step-by-Step Guides</span>
+        </div>
+        <h3>14. Legacy Refactoring Playbook, Easy-to-Change Guide &amp; Readiness Check</h3>
+        <p class="card-desc">
+          Tells you how to safely modernize multi-thousand-line patched scripts without a risky rewrite — using the Strangler Fig pattern,
+          anonymized golden fixtures, monotonic ratchets, and a binary 5-layer readiness verifier.
+        </p>
+        <div class="cmd-row"><code>python scripts/verify_workflow_ready.py --offline</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — 4-Step Legacy Modernization Sequence</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Step 1 (Snapshot baseline):</strong> Run <code>python scripts/ratchet.py --init</code> once to freeze existing debt without fixing 1,000 old lines upfront.</li>
+              <li><strong>Step 2 (Pin behavior before refactoring):</strong> Capture anonymized JSON golden fixtures + public-seam replay tests + 1 Hypothesis invariant.</li>
+              <li><strong>Step 3 (Strangle incrementally):</strong> Extract one pure deep module per vertical slice; let <code>import-linter</code> + <code>test_guard.py</code> + <code>mutation_check.py</code> prevent regressions.</li>
+              <li><strong>Step 4 (Compound cleanliness):</strong> Keep high-churn hotspots clean with <code>nightly-arch</code> and shrink debt monotonically on every PR via <code>ratchet.py --shrink</code>.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">LEGACY_REFACTORING_PLAYBOOK.md</span>
+              <span class="file-pill">docs/EASY_TO_CHANGE_GUIDE.md</span>
+              <span class="file-pill">docs/AUTONOMY_AND_BOTS_GUIDE.md</span>
+              <span class="file-pill">scripts/verify_workflow_ready.py</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+    </section>
+
+    <footer>
+      Sandcastle Python Workflow Field Guide · Offline self-contained HTML · Keep open in your browser or print to PDF anytime.
+    </footer>
+  </main>
+
+  <script>
+    const searchInput = document.getElementById("search");
+    const pills = Array.from(document.querySelectorAll(".pill"));
+    const cards = Array.from(document.querySelectorAll(".card"));
+    const matchCount = document.getElementById("match-count");
+    let activeCat = "all";
+
+    function applyFilter() {
+      const q = (searchInput.value || "").trim().toLowerCase();
+      let shown = 0;
+      for (const card of cards) {
+        const cat = card.dataset.cat || "";
+        const hay = (card.textContent + " " + (card.dataset.search || "")).toLowerCase();
+        const catOk = activeCat === "all" || cat === activeCat;
+        const textOk = !q || hay.includes(q);
+        const visible = catOk && textOk;
+        card.classList.toggle("hidden", !visible);
+        if (visible) shown += 1;
+      }
+      matchCount.textContent = `${shown} of ${cards.length} features shown`;
+    }
+
+    for (const pill of pills) {
+      pill.addEventListener("click", () => {
+        pills.forEach((p) => p.classList.remove("active"));
+        pill.classList.add("active");
+        activeCat = pill.dataset.cat || "all";
+        applyFilter();
+      });
+    }
+
+    searchInput.addEventListener("input", applyFilter);
+
+    document.getElementById("expand-all").addEventListener("click", () => {
+      document.querySelectorAll("details.tech").forEach((d) => { d.open = true; });
+    });
+
+    document.getElementById("collapse-all").addEventListener("click", () => {
+      document.querySelectorAll("details.tech").forEach((d) => { d.open = false; });
+    });
+
+    document.querySelectorAll(".copy-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const codeEl = btn.parentElement?.querySelector("code");
+        if (!codeEl) return;
+        const text = codeEl.textContent || "";
+        try {
+          await navigator.clipboard.writeText(text);
+          const orig = btn.textContent;
+          btn.textContent = "Copied!";
+          setTimeout(() => { btn.textContent = orig; }, 1400);
+        } catch {
+          window.prompt("Copy command:", text);
+        }
+      });
+    });
+
+    applyFilter();
+  </script>
+</body>
+</html>
