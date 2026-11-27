@@ -11,13 +11,22 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import {
+  SpecAuditOutputSchema,
+  type VerifiedSpecAudit,
+  parsePassingPytestNames,
+  parseSpecContract,
+  scoreGoalConfidence,
+  verifySpecAuditAgainstTests,
+} from "./confidence.js";
+import {
   GapPlanSchema,
+  type GoalContract,
   type GoalReceipt,
   checkCircuitBreaker,
   evaluateGoalContract,
@@ -25,7 +34,7 @@ import {
   parseGoalCliArgs,
   writeGoalReceipt,
 } from "./goal-core.js";
-import { writePmHtmlReport } from "./pm-report.js";
+import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -75,11 +84,78 @@ function writeGapTickets(slug: string, plan: { diagnosis: string; tickets: { tit
   return plan.tickets.length;
 }
 
+function collectPassingPytestNames(): Set<string> {
+  try {
+    const out = execFileSync("python3", ["-m", "pytest", "-v"], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return parsePassingPytestNames(out);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+async function runDeterministicSpecAudit(
+  contract: GoalContract,
+  startCommit: string,
+): Promise<VerifiedSpecAudit | null> {
+  if (!contract.specFile || !existsSync(contract.specFile)) {
+    return null;
+  }
+  const specItems = parseSpecContract(readFileSync(contract.specFile, "utf8"));
+  if (specItems.length === 0) {
+    return null;
+  }
+
+  const passingTests = collectPassingPytestNames();
+  console.log(
+    `\n--> Running fresh-context End-of-Goal Spec Audit against ${contract.specFile} (${specItems.length} items)...`,
+  );
+  const auditRun = await sandcastle.run({
+    sandbox: docker({
+      imageName: IMAGE_NAME,
+      mounts: [
+        {
+          hostPath: "~/.codex/auth.json",
+          sandboxPath: "/home/agent/.codex/auth.json",
+          readonly: true,
+        },
+      ],
+    }),
+    name: `Spec Auditor (${contract.slug})`,
+    agent: sandcastle.codex(MODEL, {
+      effort: "high",
+      approvalsReviewer: "auto_review",
+      captureSessions: true,
+    }),
+    promptFile: "./.sandcastle/spec-audit-prompt.md",
+    promptArgs: {
+      START_COMMIT: startCommit,
+      SPEC_FILE: contract.specFile,
+      PASSING_TESTS: [...passingTests].filter((t) => t.includes("::")).join("\n") || "(none)",
+    },
+    output: Output.object({
+      tag: "spec-audit",
+      schema: SpecAuditOutputSchema,
+      maxRetries: 2,
+    }),
+  });
+
+  return verifySpecAuditAgainstTests({
+    specItems,
+    audit: auditRun.output,
+    passingPytestNames: passingTests,
+    repoRoot: process.cwd(),
+  });
+}
+
 async function main(): Promise<void> {
   const { goalFile, maxMinutes } = parseGoalCliArgs(process.argv.slice(2));
   const contract = loadGoalContract(goalFile, maxMinutes);
   const startedAt = new Date();
   const startedMs = startedAt.getTime();
+  const startCommit = currentHeadSha();
 
   console.log(`\n=== Level 2 Goal Autonomy: ${contract.name} ===`);
   console.log(
@@ -193,6 +269,14 @@ async function main(): Promise<void> {
     lastEval = evaluateGoalContract(contract);
   }
 
+  const verifiedAudit = await runDeterministicSpecAudit(contract, startCommit);
+  const confidence = scoreGoalConfidence({
+    goalMet: true,
+    commandResults: lastEval.commandResults,
+    verifiedAudit,
+    gapPlanRoundsUsed,
+  });
+
   const receipt: GoalReceipt = {
     goalName: contract.name,
     slug: contract.slug,
@@ -205,36 +289,73 @@ async function main(): Promise<void> {
     gapPlanRoundsUsed,
     headCommit: currentHeadSha(),
     lastEvaluation: lastEval,
+    confidence: {
+      score: confidence.score,
+      badge: confidence.badge,
+      reasons: confidence.reasons,
+      specVerified: verifiedAudit
+        ? `${verifiedAudit.verifiedCount}/${verifiedAudit.totalSpecItems}`
+        : undefined,
+    },
   };
   const receiptPath = writeGoalReceipt(receipt);
+
+  const reportSections: ReportSection[] = [
+    {
+      heading: "Verified Goal Checks",
+      table: {
+        headers: ["Command", "Status", "Exit Code"],
+        rows: receipt.lastEvaluation.commandResults.map((r) => [
+          r.command,
+          r.passed ? "PASS" : "FAIL",
+          String(r.exitCode),
+        ]),
+      },
+    },
+  ];
+  if (verifiedAudit) {
+    reportSections.push({
+      heading: `Grilling Spec Traceability (${verifiedAudit.verifiedCount}/${verifiedAudit.totalSpecItems} verified)`,
+      table: {
+        headers: ["Spec ID", "Requirement / Rule", "Status", "Evidence & Pytest Proof"],
+        rows: verifiedAudit.rows.map((r) => [
+          r.id,
+          r.requirement,
+          r.status,
+          [r.evidenceFile, r.citedTest, r.note].filter(Boolean).join(" · ") || "--",
+        ]),
+      },
+    });
+  }
+  reportSections.push({
+    heading: "Deterministic Confidence Factors",
+    bullets: [...confidence.reasons],
+  });
+
   const htmlPath = writePmHtmlReport({
     kind: "goal",
     slug: contract.slug,
-    title: `Goal Achieved: ${contract.name}`,
-    status: "success",
-    statusLabel: "GOAL MET",
-    executiveSummary: receipt.reason,
+    title: `Goal Achieved: ${contract.name} (${confidence.score}/100)`,
+    status: confidence.status,
+    statusLabel: `${confidence.score}/100 · ${confidence.badge}`,
+    executiveSummary: `${receipt.reason} ${confidence.reasons.join(" ")}`,
     metrics: [
-      { label: "Elapsed Time", value: `${receipt.elapsedMinutes}m` },
-      { label: "Factory Cycles", value: String(receipt.cyclesRun) },
-      { label: "Gap-Plan Rounds", value: String(receipt.gapPlanRoundsUsed) },
-      { label: "HEAD Commit", value: receipt.headCommit },
-    ],
-    sections: [
+      { label: "Goal Confidence", value: `${confidence.score}/100`, note: confidence.badge },
       {
-        heading: "Verified Goal Checks",
-        table: {
-          headers: ["Command", "Status", "Exit Code"],
-          rows: receipt.lastEvaluation.commandResults.map((r) => [
-            r.command,
-            r.passed ? "PASS" : "FAIL",
-            String(r.exitCode),
-          ]),
-        },
+        label: "Grilling Spec",
+        value: verifiedAudit
+          ? `${verifiedAudit.verifiedCount}/${verifiedAudit.totalSpecItems}`
+          : "No specFile",
+        note: verifiedAudit ? "Cross-checked vs pytest" : "Add specFile in goal.json",
       },
+      { label: "Elapsed Time", value: `${receipt.elapsedMinutes}m`, note: `${receipt.cyclesRun} cycle(s)` },
+      { label: "HEAD Commit", value: receipt.headCommit, note: `${receipt.gapPlanRoundsUsed} gap round(s)` },
     ],
+    sections: reportSections,
   });
-  console.log(`\n=== GOAL MET ===\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
+  console.log(
+    `\n=== GOAL MET (${confidence.score}/100 · ${confidence.badge}) ===\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`,
+  );
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {

@@ -14,6 +14,8 @@ import { z } from "zod";
 export const GoalContractSchema = z.object({
   name: z.string().min(1),
   slug: z.string().regex(/^[a-z0-9-]+$/u),
+  /** Optional frozen `/grill-me` Spec Contract markdown file with REQ-*, INV-*, OUT-* items. */
+  specFile: z.string().min(1).optional(),
   requireAllTicketsResolved: z.boolean().default(true),
   verifyCommands: z.array(z.string().min(1)).min(1),
   /** Maximum total wall-clock minutes. Set to 0 for unlimited wall-clock time. */
@@ -66,6 +68,12 @@ export interface GoalReceipt {
   readonly gapPlanRoundsUsed: number;
   readonly headCommit: string;
   readonly lastEvaluation: GoalEvaluation;
+  readonly confidence?: {
+    readonly score: number;
+    readonly badge: string;
+    readonly reasons: readonly string[];
+    readonly specVerified?: string;
+  };
 }
 
 export function loadGoalContract(filePath: string, overrideMaxMinutes?: number): GoalContract {

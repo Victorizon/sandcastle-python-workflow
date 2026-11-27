@@ -135,3 +135,42 @@ Every `factory`, `goal`, `nightly-arch`, `bakeoff`, and `tune` run automatically
 
 - **Double-click to open** in any browser to share with colleagues or save as PDF (`Print / PDF` button).
 - **1-Click `Copy Jira Markup` button** copies ready-to-paste Jira wiki syntax (`h2.`, `{panel}`, metrics, and tables) straight to your clipboard.
+
+---
+
+## 6. Deterministic Confidence Grading & Agent Trust Score
+
+You can scale autonomy only as far as you can trust your agents. Instead of asking an LLM to self-report confidence, `.sandcastle/confidence.ts` computes **0–100 scores and plain-English Action Badges** strictly from hard mechanical signals, hard safety caps, and verified test runs.
+
+### Action Badges (No Averaging Away Red Flags)
+
+| Score Band | Action Badge | What It Means |
+| :--- | :--- | :--- |
+| **90–100** | **Spot-Check Ready** | All 6 gates green, `>= 90%` mutation kill, zero tampering, zero drift, all spec items verified. |
+| **75–89** | **Quick Review** | All gates green with minor friction (e.g., 1 adversarial fix round or moderate diff size). |
+| **50–74** | **Review Carefully** | Gates passed, **but** a hard cap fired (recovered `test_guard` block, drift split, scope creep, mutation `< 85%`, or diff `> 400` lines). |
+| **0–49** | **Blocked — Do Not Ship** | Any hard gate failed, any required `/grill-me` spec item missing, or unresolved Standards violation. |
+
+### End-of-Goal Grilling Spec Audit (`docs/specs/`)
+
+1. After `/grill-me`, save a short numbered contract using `docs/specs/TEMPLATE.md` (`REQ-*`, `INV-*`, `OUT-*` bullets).
+2. Point `goal.json`'s `"specFile"` to that file (see `docs/specs/order-triage-example.md`).
+3. When Level 2 Goal Autonomy finishes, one fresh-context Spec Auditor maps each ID to code and a passing test — and **deterministic TypeScript cross-checks every cited test against real `pytest -v` output**. Any omitted ID or hallucinated test name automatically downgrades or blocks the score, and the full traceability table appears in your PM HTML & Jira report.
+
+### Measuring Agent Trust & Earned Autonomy
+
+```bash
+# View your rolling Agent Trust Score (0-100), Autonomy Tier, and PM HTML scorecard (0 LLM calls)
+npm --prefix .sandcastle run trust
+
+# Optional 5-second Human Reality Check after reviewing a run
+npm --prefix .sandcastle run rate -- --latest --verdict good
+npm --prefix .sandcastle run rate -- --latest --verdict tweak --note "renamed helper"
+npm --prefix .sandcastle run rate -- --latest --verdict rework --note "missed nested payload case"
+```
+
+- **Supervised Only:** `< 10` verified local runs, trust `< 70`, or integrity `< 95%`.
+- **Factory Ready (Level 1):** `>= 10` runs, trust `70–84`, integrity `>= 95%`.
+- **Goal Autonomy Ready (Level 2):** `>= 10` runs, trust `>= 85`, integrity `>= 98%`, and human approval `>= 85%` (if rated).
+- Human `--note` entries also feed into `npm --prefix .sandcastle run tune` so recurring blind spots become concrete test/prompt improvements.
+

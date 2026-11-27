@@ -14,6 +14,10 @@ import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
+  computeAgentTrustScore,
+  loadHumanRatings,
+} from "./confidence.js";
+import {
   type FactoryRunRecord,
   MIN_RUNS_FOR_TUNING,
   loadVerifiedRunHistory,
@@ -230,6 +234,8 @@ async function main(): Promise<void> {
   const logsDir = path.join(".sandcastle", "logs");
   const verifiedRuns = assertMinimumRuns(logsDir, MIN_RUNS_FOR_TUNING);
   const stats = computeAggregatedStats(verifiedRuns);
+  const humanRatings = loadHumanRatings(logsDir);
+  const trust = computeAgentTrustScore(verifiedRuns, humanRatings);
 
   let proposal: TuningProposal | null = null;
   let clampedNotes: readonly string[] = [];
@@ -256,7 +262,15 @@ async function main(): Promise<void> {
       }),
       promptFile: "./.sandcastle/tune-prompt.md",
       promptArgs: {
-        AGGREGATED_STATS_JSON: JSON.stringify(stats, null, 2),
+        AGGREGATED_STATS_JSON: JSON.stringify(
+          {
+            stats,
+            agentTrust: trust,
+            recentHumanFeedback: humanRatings.slice(-10),
+          },
+          null,
+          2,
+        ),
         SAFETY_CLAMPS_JSON: JSON.stringify(SAFETY_CLAMPS, null, 2),
       },
       output: Output.object({
@@ -286,9 +300,9 @@ async function main(): Promise<void> {
       `Aggregated deterministic p50/p90 metrics across ${stats.verifiedRunCount} verified local factory runs.`,
     metrics: [
       { label: "Verified Runs", value: String(stats.verifiedRunCount) },
+      { label: "Agent Trust", value: `${trust.trustScore}/100`, note: trust.tier },
       { label: "p90 Elapsed", value: `${stats.p90ElapsedMin}m` },
       { label: "p90 Diff Lines", value: String(stats.p90DiffLines) },
-      { label: "Drift Splits", value: String(stats.driftAutoSplits) },
     ],
     sections: [
       {

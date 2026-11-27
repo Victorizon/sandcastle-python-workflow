@@ -26,10 +26,10 @@ export interface ReportSection {
 }
 
 export interface PmReportInput {
-  readonly kind: "factory" | "goal" | "nightly-arch" | "bakeoff" | "tuning";
+  readonly kind: "factory" | "goal" | "nightly-arch" | "bakeoff" | "tuning" | "trust";
   readonly slug: string;
   readonly title: string;
-  readonly status: "success" | "attention" | "proposal";
+  readonly status: "success" | "attention" | "proposal" | "blocked";
   readonly statusLabel: string;
   readonly executiveSummary: string;
   readonly generatedAt?: string;
@@ -83,9 +83,11 @@ export function renderPmHtmlReport(input: PmReportInput): string {
   const badgeColor =
     input.status === "success"
       ? "#059669"
-      : input.status === "attention"
-        ? "#d97706"
-        : "#4f46e5";
+      : input.status === "blocked"
+        ? "#dc2626"
+        : input.status === "attention"
+          ? "#d97706"
+          : "#4f46e5";
 
   const metricsHtml = input.metrics
     .map(

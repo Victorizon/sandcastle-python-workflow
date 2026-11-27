@@ -15,8 +15,13 @@ import {
   parseCheckMetrics,
   summarizeAgentEventForPm,
 } from "./dashboard.js";
+import {
+  computeAgentTrustScore,
+  loadHumanRatings,
+  scoreFactoryRunConfidence,
+} from "./confidence.js";
 import { writePmHtmlReport } from "./pm-report.js";
-import { recordFactoryRun } from "./run-history.js";
+import { loadVerifiedRunHistory, recordFactoryRun } from "./run-history.js";
 import {
   DriftDetectedError,
   DriftWatchdog,
@@ -579,29 +584,44 @@ async function main(): Promise<void> {
     }
   } finally {
     const finalState = dashboard.getState();
-    recordFactoryRun(finalState);
+    const recorded = recordFactoryRun(finalState);
+    const { verifiedRuns } = loadVerifiedRunHistory();
+    const trust = computeAgentTrustScore(verifiedRuns, loadHumanRatings());
+    const conf = recorded
+      ? scoreFactoryRunConfidence(recorded)
+      : {
+          overall: {
+            score: finalState.runStatus === "complete" ? 100 : 40,
+            badge:
+              finalState.runStatus === "complete"
+                ? ("Spot-Check Ready" as const)
+                : ("Blocked — Do Not Ship" as const),
+            status:
+              finalState.runStatus === "complete"
+                ? ("success" as const)
+                : ("blocked" as const),
+            reasons: [finalState.headline],
+          },
+          bySlice: new Map(),
+        };
+
     const htmlPath = writePmHtmlReport({
       kind: "factory",
       slug: "session",
-      title: "Sandcastle Factory Run Summary",
-      status: finalState.runStatus === "complete" ? "success" : "attention",
-      statusLabel: finalState.runStatus === "complete" ? "Complete" : "Needs Review",
-      executiveSummary: finalState.headline,
+      title: `Sandcastle Factory Run Summary (${conf.overall.score}/100)`,
+      status: conf.overall.status,
+      statusLabel: `${conf.overall.score}/100 · ${conf.overall.badge}`,
+      executiveSummary: `${finalState.headline} Confidence assessment: ${conf.overall.reasons.join(" ")}`,
       metrics: [
+        {
+          label: "Run Confidence",
+          value: `${conf.overall.score}/100`,
+          note: conf.overall.badge,
+        },
         {
           label: "Slices Shipped",
           value: `${finalState.metrics.completedSlices} / ${finalState.metrics.totalSlices}`,
           note: `${finalState.metrics.progressPercent}% complete`,
-        },
-        {
-          label: "Adversarial Challenges",
-          value: String(finalState.metrics.adversarialChallengesRaised),
-          note: `${finalState.metrics.adversarialChallengesResolved} fixed before merge`,
-        },
-        {
-          label: "Drift Auto-Splits",
-          value: String(finalState.metrics.driftAutoSplits),
-          note: `${finalState.metrics.testTamperBlocks} tamper blocks`,
         },
         {
           label: "Test Strength",
@@ -614,24 +634,43 @@ async function main(): Promise<void> {
               ? `Coverage ${finalState.metrics.latestCoveragePercent}%`
               : "Coverage --",
         },
+        {
+          label: "Agent Trust",
+          value: `${trust.trustScore}/100`,
+          note: trust.tier,
+        },
       ],
       sections: [
         {
-          heading: "Slice Outcomes",
+          heading: "Slice Outcomes & Deterministic Confidence",
           table: {
-            headers: ["Slice", "Title", "Stage", "Diff Lines", "Summary"],
-            rows: finalState.slices.map((s) => [
-              s.id,
-              s.title,
-              s.stage,
-              String(s.watchdog.diffLines),
-              s.pmSummary,
-            ]),
+            headers: ["Slice", "Title", "Stage", "Confidence", "Diff Lines", "Summary"],
+            rows: finalState.slices.map((s) => {
+              const sc = conf.bySlice.get(s.id);
+              return [
+                s.id,
+                s.title,
+                s.stage,
+                sc ? `${sc.score}/100 · ${sc.badge}` : "--",
+                String(s.watchdog.diffLines),
+                s.pmSummary,
+              ];
+            }),
           },
+        },
+        {
+          heading: "Confidence Factors & Human Reality Check",
+          bullets: [
+            ...conf.overall.reasons,
+            `Rolling Agent Trust across ${trust.runsAnalyzed} verified run(s): ${trust.trustScore}/100 (${trust.tier}).`,
+            `Optional post-review feedback: run \`npm --prefix .sandcastle run rate -- --latest --verdict good|tweak|rework\`.`,
+          ],
         },
       ],
     });
-    console.log(`PM HTML report saved to: ${htmlPath}`);
+    console.log(
+      `Confidence: ${conf.overall.score}/100 (${conf.overall.badge})\nPM HTML report saved to: ${htmlPath}`,
+    );
     await dashboard.close();
   }
 }
