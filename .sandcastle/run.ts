@@ -15,6 +15,7 @@ import {
   parseCheckMetrics,
   summarizeAgentEventForPm,
 } from "./dashboard.js";
+import { recordFactoryRun } from "./run-history.js";
 import {
   DriftDetectedError,
   DriftWatchdog,
@@ -576,6 +577,7 @@ async function main(): Promise<void> {
       }
     }
   } finally {
+    recordFactoryRun(dashboard.getState());
     await dashboard.close();
   }
 }
