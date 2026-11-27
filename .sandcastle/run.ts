@@ -28,6 +28,12 @@ import {
   DriftWatchdog,
   parseGitNumstat,
 } from "./drift-watchdog.js";
+import {
+  type TrackerTicketSnapshot,
+  acquireRunLock,
+  assertCleanGitWorktree,
+  validatePlannedTicketsAgainstTracker,
+} from "./preflight.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -91,6 +97,22 @@ function preflightChecks(): void {
   } catch {
     throw new Error("Docker daemon is not reachable. Start Docker Desktop with WSL2 integration.");
   }
+  assertCleanGitWorktree();
+  try {
+    execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "check-cycles"], { stdio: "pipe" });
+  } catch (err) {
+    const e = err as { stderr?: Buffer | string };
+    throw new Error(`Ticket dependency cycle detected:\n${String(e.stderr ?? "")}`);
+  }
+}
+
+function loadLiveTrackerReadyTickets(): TrackerTicketSnapshot[] {
+  const out = execFileSync(
+    PYTHON_BIN,
+    ["scripts/local_tracker.py", "list", "--status", "ready-for-agent", "--json"],
+    { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+  );
+  return JSON.parse(out) as TrackerTicketSnapshot[];
 }
 
 function makeDocker() {
@@ -636,6 +658,7 @@ async function processTicket(
 
 async function main(): Promise<void> {
   preflightChecks();
+  const releaseLock = acquireRunLock(".run.lock", "factory");
 
   const dashboard = new PMDashboard({
     mode: "factory",
@@ -665,7 +688,14 @@ async function main(): Promise<void> {
         }),
       });
 
-      const { tickets } = planRun.output;
+      const liveTrackerTickets = loadLiveTrackerReadyTickets();
+      const { valid: tickets, droppedReasons } = validatePlannedTicketsAgainstTracker(
+        planRun.output.tickets,
+        liveTrackerTickets,
+      );
+      if (droppedReasons.length > 0) {
+        console.warn("  [PREFLIGHT] Dropped invalid Planner selections:", droppedReasons.join("; "));
+      }
       if (tickets.length === 0) {
         dashboard.setRunStatus("complete", "All planned slices complete — no ready-for-agent work remaining.");
         break;
@@ -896,6 +926,7 @@ async function main(): Promise<void> {
         formatEndOfRunFooter({ kind: "factory", reportPath: htmlPath }),
     );
     await dashboard.close();
+    releaseLock();
   }
 }
 

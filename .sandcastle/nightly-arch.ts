@@ -21,6 +21,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import { formatEndOfRunFooter } from "./coach.js";
 import { writePmHtmlReport } from "./pm-report.js";
+import { assertCleanGitWorktree } from "./preflight.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -178,6 +179,9 @@ function parseCliArgs(argv: readonly string[]): {
 
 async function main(): Promise<void> {
   const { maxProposals, mode, openPrs } = parseCliArgs(process.argv.slice(2));
+  if (mode === "draft-branch") {
+    assertCleanGitWorktree();
+  }
   const dateTag = new Date().toISOString().slice(0, 10);
 
   let gitLogOut = "";

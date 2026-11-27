@@ -23,6 +23,7 @@ import { formatEndOfRunFooter } from "./coach.js";
 import { parseCheckMetrics } from "./dashboard.js";
 import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
+import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -200,6 +201,16 @@ function parseBakeoffArgs(argv: readonly string[]): { readonly slug: string; rea
 }
 
 async function main(): Promise<void> {
+  assertCleanGitWorktree();
+  const releaseLock = acquireRunLock(".bakeoff.lock", "bakeoff");
+  try {
+    await runBakeoff();
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runBakeoff(): Promise<void> {
   const { slug, brief } = parseBakeoffArgs(process.argv.slice(2));
   console.log(`\n=== Parallel Prototype Bake-Off: ${slug} ===`);
 

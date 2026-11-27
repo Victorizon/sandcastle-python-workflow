@@ -510,3 +510,94 @@ def test_gauntlet_scale_benchmark_diff_scoped_parallel_mutation(tmp_path: Path) 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "diff-scoped vs main (1 file(s))" in proc.stdout
     assert elapsed < 25.0, f"Diff-scoped parallel mutation took too long: {elapsed:.2f}s"
+
+
+def test_local_tracker_split_repoints_downstream_blockers_and_detects_cycles(
+    tmp_path: Path,
+) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    tracker = str(repo / "scripts" / "local_tracker.py")
+    issues_dir = repo / ".scratch" / "workflow-smoke-test" / "issues"
+
+    # Add Ticket 02 blocked by Ticket 01
+    t2 = issues_dir / "02-downstream-task.md"
+    t2.write_text(
+        "# 02: Downstream task\n\n"
+        "**What to build:** Runs only after 01 completes.\n\n"
+        "**Blocked by:** 01\n\n"
+        "**Status:** ready-for-agent\n",
+        encoding="utf-8",
+    )
+
+    plan_file = tmp_path / "split.json"
+    plan_file.write_text(
+        json.dumps(
+            {
+                "reason": "oversized slice",
+                "subtickets": [
+                    {
+                        "title": "Part A",
+                        "what_to_build": "Build A",
+                        "acceptance_criteria": ["Passes"],
+                        "blocked_by_indexes": [],
+                    },
+                    {
+                        "title": "Part B",
+                        "what_to_build": "Build B",
+                        "acceptance_criteria": ["Passes"],
+                        "blocked_by_indexes": [0],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    split_res = subprocess.run(
+        [
+            sys.executable,
+            tracker,
+            "--root",
+            str(repo),
+            "split",
+            "workflow-smoke-test/01",
+            "--plan-json",
+            str(plan_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(split_res.stdout)
+    assert payload["created"] == ["workflow-smoke-test/03", "workflow-smoke-test/04"]
+    assert payload["repointed_downstream"] == ["workflow-smoke-test/02"]
+
+    # Ticket 02 MUST now be blocked by 03 and 04 (NOT unblocked prematurely!)
+    listed = subprocess.run(
+        [sys.executable, tracker, "--root", str(repo), "list", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    by_id = {item["id"]: item for item in json.loads(listed.stdout)}
+    assert by_id["workflow-smoke-test/02"]["open_blockers"] == [
+        "workflow-smoke-test/03",
+        "workflow-smoke-test/04",
+    ]
+
+    # Introduce a circular dependency (03 blocked by 02, while 02 is blocked by 03) -> MUST fail
+    t3 = next(issues_dir.glob("03-*.md"))
+    t3.write_text(
+        t3.read_text(encoding="utf-8").replace(
+            "**Blocked by:** None (can start immediately)", "**Blocked by:** 02"
+        ),
+        encoding="utf-8",
+    )
+    cycle_res = subprocess.run(
+        [sys.executable, tracker, "--root", str(repo), "check-cycles"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert cycle_res.returncode == 1
+    assert "Circular ticket dependency detected" in cycle_res.stderr

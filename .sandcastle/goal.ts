@@ -37,6 +37,7 @@ import {
   writeGoalReceipt,
 } from "./goal-core.js";
 import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
+import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -193,6 +194,16 @@ async function runDeterministicSpecAudit(
 }
 
 async function main(): Promise<void> {
+  assertCleanGitWorktree();
+  const releaseGoalLock = acquireRunLock(".goal.lock", "goal");
+  try {
+    await runGoalLoop();
+  } finally {
+    releaseGoalLock();
+  }
+}
+
+async function runGoalLoop(): Promise<void> {
   const { goalFile, maxMinutes } = parseGoalCliArgs(process.argv.slice(2));
   const contract = loadGoalContract(goalFile, maxMinutes);
   const startedAt = new Date();

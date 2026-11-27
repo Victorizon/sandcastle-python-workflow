@@ -23,6 +23,10 @@ import {
   renderPmHtmlReport,
   writePmHtmlReport,
 } from "./pm-report.js";
+import {
+  acquireRunLock,
+  validatePlannedTicketsAgainstTracker,
+} from "./preflight.js";
 
 test("goal-core supports configurable wall-clock cap including 0 (unlimited) and stall breakers", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "sandcastle-goal-"));
@@ -238,4 +242,45 @@ test("pm-report generates styled offline HTML with 1-click Jira markup", () => {
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test("preflight lock blocks concurrent active runs and auto-recovers stale dead-PID locks", () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "sandcastle-lock-"));
+  try {
+    const release = acquireRunLock(".run.lock", "factory", tmp);
+    assert.throws(() => acquireRunLock(".run.lock", "factory", tmp), /Another Sandcastle factory/u);
+    release();
+
+    // Simulate a crashed process leaving a dead PID lockfile -> must auto-recover
+    writeFileSync(
+      path.join(tmp, ".run.lock"),
+      JSON.stringify({ pid: 99999999, label: "crashed-run", startedAt: "2026-01-01T00:00:00Z" }),
+      "utf8",
+    );
+    const releaseRecovered = acquireRunLock(".run.lock", "factory", tmp);
+    releaseRecovered();
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("validatePlannedTicketsAgainstTracker drops blocked/unknown tickets and enforces ground-truth splitDepth", () => {
+  const tracker = [
+    { id: "feat/01", status: "ready-for-agent", split_depth: 1, open_blockers: [] },
+    { id: "feat/02", status: "ready-for-agent", split_depth: 0, open_blockers: ["feat/01"] },
+  ];
+  const planned = [
+    // Planner lied splitDepth: 0 on a depth-1 child!
+    { id: "feat/01", title: "Child slice", branch: "sandcastle/feat/01", splitDepth: 0 },
+    // Planner picked a still-blocked ticket!
+    { id: "feat/02", title: "Blocked slice", branch: "sandcastle/feat/02", splitDepth: 0 },
+    // Planner hallucinated a nonexistent ticket!
+    { id: "feat/99", title: "Ghost slice", branch: "sandcastle/feat/99", splitDepth: 0 },
+  ];
+
+  const { valid, droppedReasons } = validatePlannedTicketsAgainstTracker(planned, tracker);
+  assert.equal(valid.length, 1);
+  assert.equal(valid[0]?.id, "feat/01");
+  assert.equal(valid[0]?.splitDepth, 1);
+  assert.equal(droppedReasons.length, 2);
 });

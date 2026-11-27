@@ -121,6 +121,68 @@ def _open_blockers(ticket: Ticket, by_id: dict[str, Ticket]) -> list[str]:
     ]
 
 
+def detect_blocker_cycles(tickets: list[Ticket]) -> list[list[str]]:
+    by_id = {t.id: t for t in tickets}
+    active_ids = {t.id for t in tickets if t.status not in {"resolved", "wontfix", "split"}}
+    visited: set[str] = set()
+    in_stack: set[str] = set()
+    stack: list[str] = []
+    cycles: list[list[str]] = []
+
+    def _dfs(node: str) -> None:
+        visited.add(node)
+        in_stack.add(node)
+        stack.append(node)
+        ticket = by_id.get(node)
+        if ticket is not None:
+            for dep in ticket.blocked_by:
+                if dep not in active_ids:
+                    continue
+                if dep in in_stack:
+                    start = stack.index(dep)
+                    cycles.append([*stack[start:], dep])
+                elif dep not in visited:
+                    _dfs(dep)
+        stack.pop()
+        in_stack.remove(node)
+
+    for tid in sorted(active_ids):
+        if tid not in visited:
+            _dfs(tid)
+    return cycles
+
+
+def _repoint_downstream_blockers(
+    parent: Ticket, child_nums: list[int], root: Path = ROOT
+) -> list[str]:
+    repointed: list[str] = []
+    for candidate in discover_tickets(root):
+        if candidate.feature != parent.feature or candidate.id == parent.id:
+            continue
+        if parent.id not in candidate.blocked_by:
+            continue
+        next_nums = [int(b.split("/")[-1]) for b in candidate.blocked_by if b != parent.id]
+        next_nums.extend(child_nums)
+        blocked_str = ", ".join(f"{n:02d}" for n in sorted(set(next_nums)))
+        path = root / candidate.path
+        text = path.read_text(encoding="utf-8")
+        updated = BLOCKED_RE.sub(f"**Blocked by:** {blocked_str}", text, count=1)
+        path.write_text(updated, encoding="utf-8")
+        repointed.append(candidate.id)
+    return repointed
+
+
+def cmd_check_cycles(root: Path = ROOT) -> int:
+    cycles = detect_blocker_cycles(discover_tickets(root))
+    if cycles:
+        print("Circular ticket dependency detected:", file=sys.stderr)
+        for cycle in cycles:
+            print(f"  - {' -> '.join(cycle)}", file=sys.stderr)
+        return 1
+    print("OK: zero circular ticket dependencies.")
+    return 0
+
+
 def cmd_board(root: Path = ROOT) -> int:
     tickets = discover_tickets(root)
     if not tickets:
@@ -280,6 +342,7 @@ def cmd_split(ticket_id: str, plan_json_arg: str, max_depth: int, root: Path = R
         (issues_dir / filename).write_text(md_body, encoding="utf-8")
         created_ids.append(f"{parent.feature}/{num:02d}")
 
+    repointed = _repoint_downstream_blockers(parent, allocated_nums, root)
     reason = str(plan.get("reason", "Drift watchdog auto-split")).strip()
     _append_comment(
         parent,
@@ -287,7 +350,16 @@ def cmd_split(ticket_id: str, plan_json_arg: str, max_depth: int, root: Path = R
         root,
     )
     _update_status_file(parent, "split", root)
-    print(json.dumps({"parent": parent.id, "created": created_ids, "depth": child_depth}))
+    print(
+        json.dumps(
+            {
+                "parent": parent.id,
+                "created": created_ids,
+                "depth": child_depth,
+                "repointed_downstream": repointed,
+            }
+        )
+    )
     return 0
 
 
@@ -332,6 +404,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_split.add_argument("--plan-json", required=True, help="Path to split JSON or `-` for stdin")
     p_split.add_argument("--max-depth", type=int, default=1, help="Max allowed split depth")
 
+    sub.add_parser("check-cycles", help="Fail if any circular blocker dependencies exist")
     sub.add_parser("export-github", help="Print gh issue create commands for migration")
     return parser
 
@@ -347,6 +420,7 @@ def main() -> int:
         "comment": lambda: cmd_comment(args.ticket_id, args.body, root),
         "resolve": lambda: cmd_resolve(args.ticket_id, args.summary, root),
         "split": lambda: cmd_split(args.ticket_id, args.plan_json, args.max_depth, root),
+        "check-cycles": lambda: cmd_check_cycles(root),
         "export-github": lambda: cmd_export_github(root),
     }
     try:
