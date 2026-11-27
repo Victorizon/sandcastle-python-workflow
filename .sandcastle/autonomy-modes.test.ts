@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { resolveAgentKind } from "./agent-factory.js";
+import { createAgent, createDockerSandbox, resolveAgentKind } from "./agent-factory.js";
 import {
   computeDeterministicScore,
   renderBakeoffReport,
@@ -286,9 +286,23 @@ test("validatePlannedTicketsAgainstTracker drops blocked/unknown tickets and enf
   assert.equal(droppedReasons.length, 2);
 });
 
-test("agent-factory defaults to codex and switches cleanly to claude", () => {
-  assert.equal(resolveAgentKind(undefined), "codex");
-  assert.equal(resolveAgentKind("claude"), "claude");
-  assert.equal(resolveAgentKind("claude-code"), "claude");
-  assert.equal(resolveAgentKind("codex"), "codex");
+test("agent-factory defaults to codex, honors SANDCASTLE_AGENT env var, and switches cleanly to claude", () => {
+  const prev = process.env["SANDCASTLE_AGENT"];
+  try {
+    delete process.env["SANDCASTLE_AGENT"];
+    assert.equal(resolveAgentKind(undefined), "codex");
+    assert.equal(resolveAgentKind("claude"), "claude");
+    assert.equal(resolveAgentKind(" CLAUDE-CODE "), "claude");
+    assert.equal(resolveAgentKind("codex"), "codex");
+
+    process.env["SANDCASTLE_AGENT"] = "claude";
+    assert.equal(resolveAgentKind(undefined), "claude");
+    assert.ok(createAgent("medium", "claude"));
+    assert.ok(createAgent("high", "codex"));
+    assert.ok(createDockerSandbox("sandcastle:python-codex", "claude"));
+    assert.ok(createDockerSandbox("sandcastle:python-codex", "codex"));
+  } finally {
+    if (prev === undefined) delete process.env["SANDCASTLE_AGENT"];
+    else process.env["SANDCASTLE_AGENT"] = prev;
+  }
 });
