@@ -154,10 +154,12 @@ export function runVerifyCommand(command: string, cwd = process.cwd()): CommandC
   }
 }
 
+const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
+
 export function countLocalTicketsByStatus(status: string, cwd = process.cwd()): number {
   try {
     const out = execFileSync(
-      "python3",
+      PYTHON_BIN,
       ["scripts/local_tracker.py", "list", "--status", status, "--json"],
       { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     );

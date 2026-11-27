@@ -19,7 +19,7 @@ import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import { parseCheckMetrics } from "./dashboard.js";
-import { parseGitNumstat } from "./drift-watchdog.js";
+import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
@@ -218,63 +218,85 @@ async function main(): Promise<void> {
     maxIterations: 1,
   });
 
-  // Phase 2: Parallel fork fan-out on 3 DISTINCT prototype branches
-  await Promise.all(
+  // Phase 2: Parallel fork fan-out on 3 DISTINCT prototype branches (each guarded by DriftWatchdog)
+  await Promise.allSettled(
     DEFAULT_VARIANTS.map(async (v) => {
       const branch = `prototype/${slug}-${v.label.toLowerCase()}`;
       console.log(`  --> Forking Variant ${v.label} (${v.name}) onto ${branch}`);
       if (!parent.fork) {
         throw new Error("Parent Codex session did not capture a forkable session ID.");
       }
-      await parent.fork(
-        [
-          `Now build Prototype Variant ${v.label} (${v.name}) on branch ${branch}.`,
-          `Problem: ${brief}`,
-          `Constraint: ${v.constraint}`,
-          `Rules: Follow GLOSSARY.md and ADRs. Add anonymized replay tests. NEVER delete/weaken existing tests. Run \`python scripts/check.py\`, commit with \`PROTOTYPE(${v.label}): ${slug}\`, and output <promise>COMPLETE</promise>.`,
-        ].join("\n"),
-        {
-          branchStrategy: { type: "branch", branch },
-        },
-      );
+      const watchdog = new DriftWatchdog();
+      try {
+        await parent.fork(
+          [
+            `Now build Prototype Variant ${v.label} (${v.name}) on branch ${branch}.`,
+            `Problem: ${brief}`,
+            `Constraint: ${v.constraint}`,
+            `Rules: Follow GLOSSARY.md and ADRs. Add anonymized replay tests. NEVER delete/weaken existing tests. Run \`python scripts/check.py\`, commit with \`PROTOTYPE(${v.label}): ${slug}\`, and output <promise>COMPLETE</promise>.`,
+          ].join("\n"),
+          {
+            branchStrategy: { type: "branch", branch },
+            signal: watchdog.signal,
+          },
+        );
+      } catch (err) {
+        console.warn(
+          `  [WARN] Variant ${v.label} stopped early:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      } finally {
+        watchdog.dispose();
+      }
     }),
   );
 
-  // Phase 3: Deterministic 6-Gate Scoring on every variant branch
-  const scorecards: VariantScorecard[] = [];
-  const variantDiffSnippets: string[] = [];
+  // Phase 3: Parallel Deterministic 6-Gate Scoring on every variant branch
+  const scored = await Promise.all(
+    DEFAULT_VARIANTS.map(async (v) => {
+      const branch = `prototype/${slug}-${v.label.toLowerCase()}`;
+      await using sandbox = await sandcastle.createSandbox({
+        sandbox: makeDocker(),
+        branch,
+      });
+      const check = await sandbox.exec("python scripts/check.py");
+      const numstat = await sandbox.exec("git diff --numstat main..HEAD");
+      const diffStat = await sandbox.exec("git diff --stat main..HEAD");
+      const fullDiff = await sandbox.exec("git diff main..HEAD");
+      const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
+      const { coveragePercent, mutationScore } = parseCheckMetrics(check.stdout);
 
-  for (const v of DEFAULT_VARIANTS) {
-    const branch = `prototype/${slug}-${v.label.toLowerCase()}`;
-    await using sandbox = await sandcastle.createSandbox({
-      sandbox: makeDocker(),
-      branch,
-    });
-    const check = await sandbox.exec("python scripts/check.py");
-    const numstat = await sandbox.exec("git diff --numstat main..HEAD");
-    const diffStat = await sandbox.exec("git diff --stat main..HEAD");
-    const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
-    const { coveragePercent, mutationScore } = parseCheckMetrics(check.stdout);
-
-    const card: VariantScorecard = {
-      variant: v.label,
-      name: v.name,
-      branch,
-      checkPassed: check.exitCode === 0,
-      diffFiles,
-      diffLines,
-      coveragePercent,
-      mutationScore,
-      deterministicRankScore: computeDeterministicScore({
+      const card: VariantScorecard = {
+        variant: v.label,
+        name: v.name,
+        branch,
         checkPassed: check.exitCode === 0,
+        diffFiles,
+        diffLines,
         coveragePercent,
         mutationScore,
-        diffLines,
-      }),
-    };
-    scorecards.push(card);
-    variantDiffSnippets.push(`### Variant ${v.label} (${branch})\n\`\`\`\n${diffStat.stdout.trim()}\n\`\`\``);
-  }
+        deterministicRankScore: computeDeterministicScore({
+          checkPassed: check.exitCode === 0,
+          coveragePercent,
+          mutationScore,
+          diffLines,
+        }),
+      };
+      const diffPreview = fullDiff.stdout.trim().slice(0, 8000);
+      const snippet = [
+        `### Variant ${v.label} (${branch})`,
+        "```",
+        diffStat.stdout.trim(),
+        "```",
+        "```diff",
+        diffPreview || "(no diff)",
+        "```",
+      ].join("\n");
+      return { card, snippet };
+    }),
+  );
+  const scorecards: VariantScorecard[] = scored.map((s) => s.card);
+  const variantDiffSnippets: string[] = scored.map((s) => s.snippet);
 
   // Phase 4: Fresh-Context Adversarial Judge
   const judgeRun = await sandcastle.run({

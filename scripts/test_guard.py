@@ -1,16 +1,23 @@
-"""Strict test-integrity & coverage-floor lock (`scripts/test_guard.py`).
+"""Strict test-integrity, harness-lock, and coverage-floor verifier (`scripts/test_guard.py`).
 
-Mechanically blocks AI agents from cheating tests:
-1. Anti-tampering (vs --base ref, default main):
-   - No deleting existing test files under tests/ or fixture JSONs under tests/fixtures/
-   - No modifying existing historical fixture JSONs under tests/fixtures/
+Mechanically blocks AI agents from cheating tests or tampering with referees:
+1. Harness Lock (vs --base ref, default main):
+   - Blocks agents from modifying `scripts/check.py`, `scripts/test_guard.py`,
+     `scripts/ratchet.py`, `scripts/mutation_check.py`, baseline JSONs, `pyproject.toml`,
+     `tests/conftest.py`, or `tests/fakes/fake_external_client.py` unless `--allow-harness-edit`.
+2. Anti-tampering (vs --base ref):
+   - No deleting existing test files (`test_*.py` / `*_test.py`) or fixture JSONs
+   - No modifying existing historical fixture JSONs under `tests/fixtures/`
    - No deleting/renaming existing `def test_*` functions
    - No reducing assertion counts on existing `def test_*` functions
-2. Anti-weakening (always enforced on all tests/):
+3. Anti-weakening (always enforced on all `tests/`):
    - Bans `pytest.mark.skip`, `pytest.mark.xfail`, `pytest.skip(...)`, `assert True`,
-     `assert x == x`, and tests with 0 `assert` statements (or `pytest.raises`).
-3. Monotonic coverage floor (reads coverage JSON vs `scripts/coverage-baseline.json`):
-   - Total `src/` line coverage may NEVER drop below baseline (0.1% cross-platform tolerance).
+     `assert not False`, truthy-literal asserts, constant comparisons (`assert 1 != 2`),
+     `assert x == x`, swallowed assertions (`try: assert ... except ...`), dead-branch
+     assertions (`if False: assert ...`), and tests with 0 `assert` statements.
+4. Monotonic coverage floor (reads coverage JSON vs `scripts/coverage-baseline.json` AND base ref):
+   - Total `src/` line coverage may NEVER drop below baseline (0.1% cross-platform tolerance),
+     and `scripts/coverage-baseline.json` may NEVER be lowered vs `--base`.
 """
 
 from __future__ import annotations
@@ -26,6 +33,20 @@ ROOT = Path(__file__).resolve().parent.parent
 COVERAGE_BASELINE_PATH = ROOT / "scripts" / "coverage-baseline.json"
 COVERAGE_TOLERANCE = 0.1
 
+HARNESS_LOCKED_FILES: tuple[str, ...] = (
+    "scripts/check.py",
+    "scripts/test_guard.py",
+    "scripts/ratchet.py",
+    "scripts/mutation_check.py",
+    "scripts/coverage-baseline.json",
+    "scripts/ratchet-baseline.json",
+    "pyproject.toml",
+    "tests/conftest.py",
+    "tests/fakes/fake_external_client.py",
+)
+
+BROAD_EXCEPT_NAMES: frozenset[str] = frozenset({"AssertionError", "Exception", "BaseException"})
+
 
 @dataclass(frozen=True)
 class TestFunctionStats:
@@ -33,19 +54,77 @@ class TestFunctionStats:
     assert_count: int
     has_skip_or_xfail: bool
     has_trivial_assert: bool
+    has_swallowed_or_dead_assert: bool
+
+
+def _is_constant_expr(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.UnaryOp):
+        return _is_constant_expr(node.operand)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_is_constant_expr(el) for el in node.elts)
+    return False
 
 
 def _is_trivial_assert(node: ast.Assert) -> bool:
     test = node.test
-    if isinstance(test, ast.Constant) and test.value is True:
+    if isinstance(test, ast.Constant) and bool(test.value):
         return True
-    return (
-        isinstance(test, ast.Compare)
-        and len(test.ops) == 1
-        and isinstance(test.ops[0], ast.Eq)
-        and len(test.comparators) == 1
-        and ast.dump(test.left) == ast.dump(test.comparators[0])
-    )
+    if (
+        isinstance(test, ast.UnaryOp)
+        and isinstance(test.op, ast.Not)
+        and isinstance(test.operand, ast.Constant)
+        and not bool(test.operand.value)
+    ):
+        return True
+    if isinstance(test, (ast.List, ast.Tuple, ast.Set)) and len(test.elts) > 0:
+        return True
+    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
+        right = test.comparators[0]
+        if isinstance(test.ops[0], ast.Eq) and ast.dump(test.left) == ast.dump(right):
+            return True
+        if _is_constant_expr(test.left) and _is_constant_expr(right):
+            return True
+    return False
+
+
+def _has_assert_inside(nodes: list[ast.stmt]) -> bool:
+    for stmt in nodes:
+        for child in ast.walk(stmt):
+            if isinstance(child, ast.Assert):
+                return True
+    return False
+
+
+def _catches_assertion_error(handler: ast.ExceptHandler) -> bool:
+    if handler.type is None:
+        return True
+    if isinstance(handler.type, ast.Name):
+        return handler.type.id in BROAD_EXCEPT_NAMES
+    if isinstance(handler.type, ast.Tuple):
+        return any(
+            isinstance(el, ast.Name) and el.id in BROAD_EXCEPT_NAMES for el in handler.type.elts
+        )
+    return False
+
+
+def _has_swallowed_or_dead_assert(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for child in ast.walk(fn):
+        if (
+            isinstance(child, ast.Try)
+            and _has_assert_inside(child.body)
+            and any(_catches_assertion_error(h) for h in child.handlers)
+        ):
+            return True
+        if (
+            isinstance(child, ast.If)
+            and isinstance(child.test, ast.Constant)
+            and not bool(child.test.value)
+            and _has_assert_inside(child.body)
+        ):
+            return True
+    return False
 
 
 def _has_skip_decorator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
@@ -83,8 +162,17 @@ def _analyze_test_source(source: str) -> dict[str, TestFunctionStats]:
             assert_count=asserts,
             has_skip_or_xfail=has_skip,
             has_trivial_assert=has_trivial,
+            has_swallowed_or_dead_assert=_has_swallowed_or_dead_assert(node),
         )
     return stats
+
+
+def _is_test_filename(name: str) -> bool:
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def _iter_test_files(tests_dir: Path) -> list[Path]:
+    return sorted(p for p in tests_dir.rglob("*.py") if _is_test_filename(p.name))
 
 
 def _git_ref_exists(root: Path, ref: str) -> bool:
@@ -96,6 +184,15 @@ def _git_ref_exists(root: Path, ref: str) -> bool:
         check=False,
     )
     return proc.returncode == 0
+
+
+def _resolve_base_ref(root: Path, base_ref: str) -> str | None:
+    if _git_ref_exists(root, base_ref):
+        return base_ref
+    remote_candidate = f"origin/{base_ref}"
+    if _git_ref_exists(root, remote_candidate):
+        return remote_candidate
+    return None
 
 
 def _git_list_files(root: Path, ref: str, prefix: str) -> list[str]:
@@ -127,7 +224,7 @@ def check_static_test_quality(root: Path = ROOT) -> list[str]:
     tests_dir = root / "tests"
     if not tests_dir.exists():
         return ["Missing tests/ directory."]
-    for py_file in sorted(tests_dir.rglob("test_*.py")):
+    for py_file in _iter_test_files(tests_dir):
         rel = py_file.relative_to(root).as_posix()
         stats = _analyze_test_source(py_file.read_text(encoding="utf-8"))
         if not stats:
@@ -138,38 +235,72 @@ def check_static_test_quality(root: Path = ROOT) -> list[str]:
                 issues.append(f"{rel}::{fn.name}: skip/xfail is banned.")
             if fn.has_trivial_assert:
                 issues.append(f"{rel}::{fn.name}: tautological/trivial assertion detected.")
+            if fn.has_swallowed_or_dead_assert:
+                issues.append(
+                    f"{rel}::{fn.name}: swallowed (try/except) or dead-branch (if False) assertion."
+                )
             if fn.assert_count == 0:
                 issues.append(f"{rel}::{fn.name}: test has zero assertions.")
     return issues
 
 
+def check_harness_lock(
+    base_ref: str,
+    root: Path = ROOT,
+    allow_harness_edit: bool = False,
+) -> list[str]:
+    if allow_harness_edit:
+        return []
+    resolved = _resolve_base_ref(root, base_ref)
+    if resolved is None:
+        return []
+
+    issues: list[str] = []
+    for rel in HARNESS_LOCKED_FILES:
+        base_content = _git_show_file(root, resolved, rel)
+        if base_content is None:
+            continue
+        current_path = root / rel
+        if not current_path.exists():
+            issues.append(f"{rel}: locked harness/referee file deleted (blocked).")
+            continue
+        current_content = current_path.read_text(encoding="utf-8")
+        if base_content.replace("\r\n", "\n") != current_content.replace("\r\n", "\n"):
+            issues.append(
+                f"{rel}: locked harness/referee file modified "
+                "(blocked; pass --allow-harness-edit for intentional human updates)."
+            )
+    return issues
+
+
 def check_anti_tampering(base_ref: str, root: Path = ROOT) -> list[str]:
-    if not _git_ref_exists(root, base_ref):
+    resolved = _resolve_base_ref(root, base_ref)
+    if resolved is None:
         return []
     issues: list[str] = []
 
-    for rel in _git_list_files(root, base_ref, "tests/fixtures"):
+    for rel in _git_list_files(root, resolved, "tests/fixtures"):
         if not rel.endswith(".json"):
             continue
         current_path = root / rel
         if not current_path.exists():
             issues.append(f"{rel}: deleted existing replay fixture (blocked; human approval only).")
             continue
-        base_content = _git_show_file(root, base_ref, rel)
+        base_content = _git_show_file(root, resolved, rel)
         current_content = current_path.read_text(encoding="utf-8")
         if base_content is not None and base_content.strip() != current_content.strip():
             issues.append(
                 f"{rel}: modified existing replay fixture (add a new fixture instead of editing)."
             )
 
-    for rel in _git_list_files(root, base_ref, "tests"):
-        if not Path(rel).name.startswith("test_") or not rel.endswith(".py"):
+    for rel in _git_list_files(root, resolved, "tests"):
+        if not _is_test_filename(Path(rel).name):
             continue
         current_path = root / rel
         if not current_path.exists():
             issues.append(f"{rel}: deleted existing test file (blocked; human approval only).")
             continue
-        base_src = _git_show_file(root, base_ref, rel)
+        base_src = _git_show_file(root, resolved, rel)
         if base_src is None:
             continue
         base_stats = _analyze_test_source(base_src)
@@ -185,7 +316,12 @@ def check_anti_tampering(base_ref: str, root: Path = ROOT) -> list[str]:
     return issues
 
 
-def check_coverage_floor(coverage_json: Path, shrink: bool, root: Path = ROOT) -> list[str]:
+def check_coverage_floor(
+    coverage_json: Path,
+    shrink: bool,
+    root: Path = ROOT,
+    base_ref: str = "main",
+) -> list[str]:
     baseline_path = root / "scripts" / "coverage-baseline.json"
     if not coverage_json.exists():
         return [f"Missing coverage report at {coverage_json}."]
@@ -201,6 +337,18 @@ def check_coverage_floor(coverage_json: Path, shrink: bool, root: Path = ROOT) -
 
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     floor = float(baseline["min_percent"])
+
+    # Never allow scripts/coverage-baseline.json itself to be lowered vs base_ref
+    resolved = _resolve_base_ref(root, base_ref)
+    if resolved is not None:
+        base_raw = _git_show_file(root, resolved, "scripts/coverage-baseline.json")
+        if base_raw is not None:
+            base_floor = float(json.loads(base_raw)["min_percent"])
+            if floor < base_floor:
+                return [
+                    f"scripts/coverage-baseline.json was lowered vs {resolved}: "
+                    f"{base_floor:.2f}% -> {floor:.2f}% (monotonic floor may only rise)."
+                ]
 
     if shrink and percent > floor:
         baseline_path.write_text(
@@ -242,14 +390,22 @@ def main() -> int:
         action="store_true",
         help="Ratchet scripts/coverage-baseline.json upward if coverage improved",
     )
+    parser.add_argument(
+        "--allow-harness-edit",
+        action="store_true",
+        help="Permit intentional human edits to locked harness/referee files",
+    )
     args = parser.parse_args()
 
     issues = [
         *check_static_test_quality(args.root),
+        *check_harness_lock(args.base, args.root, args.allow_harness_edit),
         *check_anti_tampering(args.base, args.root),
     ]
     if args.coverage_json is not None:
-        issues.extend(check_coverage_floor(args.coverage_json, args.shrink_coverage, args.root))
+        issues.extend(
+            check_coverage_floor(args.coverage_json, args.shrink_coverage, args.root, args.base)
+        )
 
     if issues:
         print("Test Guard FAILED — suspected test weakening, tampering, or coverage drop:")

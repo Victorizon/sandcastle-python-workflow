@@ -101,3 +101,36 @@ test("parseGitNumstat sums files and added+deleted lines cleanly", () => {
   const parsed = parseGitNumstat(sample);
   assert.deepEqual(parsed, { files: 3, lines: 60 });
 });
+
+test("aborts on 2-step ping-pong oscillation thrash loop (edit -> pytest -> edit -> pytest)", () => {
+  const wd = new DriftWatchdog({
+    maxTicketMs: 60_000,
+    maxToolCalls: 45,
+    maxRepeatedToolCalls: 6,
+    maxOscillationCycles: 3,
+  });
+  try {
+    for (let i = 0; i < 3; i++) {
+      wd.onEvent({
+        type: "toolCall",
+        name: "edit_file",
+        formattedArgs: "src/app/processors/order_triage.py",
+        iteration: 1,
+        timestamp: new Date(),
+      });
+      wd.onEvent({
+        type: "toolCall",
+        name: "shell",
+        formattedArgs: "pytest tests/test_order_triage.py",
+        iteration: 1,
+        timestamp: new Date(),
+      });
+    }
+    assert.equal(wd.signal.aborted, true);
+    assert.equal(wd.drift?.kind, "thrash_loop");
+    assert.match(wd.drift?.detail ?? "", /ping-pong oscillation/u);
+    assert.equal(wd.toolCallCount, 6);
+  } finally {
+    wd.dispose();
+  }
+});

@@ -30,6 +30,7 @@ import {
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
+const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
 
 // Hard numeric caps — guarantees the pipeline can NEVER enter an endless loop.
 const MAX_OUTER_CYCLES = 6;
@@ -127,10 +128,10 @@ function escalateTicketToHuman(ticketId: string, reason: string, dashboard: PMDa
     detail: reason,
   });
   try {
-    execFileSync("python3", ["scripts/local_tracker.py", "comment", ticketId, "--body", reason], {
+    execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "comment", ticketId, "--body", reason], {
       stdio: "inherit",
     });
-    execFileSync("python3", ["scripts/local_tracker.py", "set-status", ticketId, "ready-for-human"], {
+    execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "set-status", ticketId, "ready-for-human"], {
       stdio: "inherit",
     });
   } catch (err) {
@@ -204,7 +205,7 @@ async function handleDriftRemediation(
     });
 
     execFileSync(
-      "python3",
+      PYTHON_BIN,
       ["scripts/local_tracker.py", "split", ticket.id, "--plan-json", "-", "--max-depth", String(MAX_AUTO_SPLITS)],
       {
         input: JSON.stringify(splitRun.output),
@@ -575,10 +576,33 @@ async function main(): Promise<void> {
         },
       });
 
+      // Deterministic host-side verification after Merger (never trust Merger's word alone)
+      let hostCheckPassed = true;
+      try {
+        execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
+      } catch {
+        hostCheckPassed = false;
+      }
+
+      if (!hostCheckPassed) {
+        for (const t of readyToMerge) {
+          escalateTicketToHuman(
+            t.id,
+            "Host post-merge `python scripts/check.py` FAILED after Merger finished. Inspect `main` immediately.",
+            dashboard,
+          );
+        }
+        dashboard.setRunStatus(
+          "blocked",
+          "Post-merge deterministic verification failed — halted for human inspection.",
+        );
+        break;
+      }
+
       for (const merged of readyToMerge) {
         dashboard.upsertSlice(merged.id, {
           stage: "merged",
-          pmSummary: "Merged into main and marked resolved.",
+          pmSummary: "Merged into main, re-verified on host via check.py, and marked resolved.",
         });
       }
     }

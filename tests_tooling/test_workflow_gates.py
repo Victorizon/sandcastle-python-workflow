@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -364,3 +365,148 @@ def test_local_tracker_auto_split_creates_subtickets_and_enforces_max_depth(
     )
     assert second_split.returncode == 1
     assert "split_depth=1 >= max=1" in second_split.stderr
+
+
+def test_gauntlet_blocks_tampering_with_harness_and_coverage_baseline(tmp_path: Path) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+
+    # Cheat 1: Agent lowers scripts/coverage-baseline.json from 100.0 -> 10.0
+    cov_base = repo / "scripts" / "coverage-baseline.json"
+    cov_base.write_text('{"min_percent": 10.0}\n', encoding="utf-8")
+    cov_json = repo / "fake_cov.json"
+    cov_json.write_text(json.dumps({"totals": {"percent_covered": 50.0}}), encoding="utf-8")
+
+    res_cov = _run_test_guard(repo, ["--coverage-json", str(cov_json)])
+    assert res_cov.returncode == 1
+    assert "locked harness/referee file modified" in res_cov.stdout
+    assert "was lowered vs main" in res_cov.stdout
+
+    # Even with --allow-harness-edit, lowering coverage-baseline.json below main MUST stay blocked!
+    res_cov_override = _run_test_guard(
+        repo, ["--coverage-json", str(cov_json), "--allow-harness-edit"]
+    )
+    assert res_cov_override.returncode == 1
+    assert "was lowered vs main" in res_cov_override.stdout
+
+    # Cheat 2: Agent weakens tests/conftest.py Hypothesis max_examples=50 -> 1
+    repo2 = _init_temp_git_repo(tmp_path / "r2")
+    conftest = repo2 / "tests" / "conftest.py"
+    conftest.write_text(
+        conftest.read_text(encoding="utf-8").replace("max_examples=50", "max_examples=1"),
+        encoding="utf-8",
+    )
+    res_conf = _run_test_guard(repo2)
+    assert res_conf.returncode == 1
+    assert "tests/conftest.py: locked harness/referee file modified" in res_conf.stdout
+
+
+def test_gauntlet_blocks_sneaky_test_weakening_tricks(tmp_path: Path) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    sneaky = repo / "tests" / "sneaky_cheat_test.py"
+    sneaky.write_text(
+        "def test_swallowed_assert() -> None:\n"
+        "    try:\n"
+        "        assert 1 == 2\n"
+        "    except AssertionError:\n"
+        "        pass\n\n"
+        "def test_dead_branch_assert() -> None:\n"
+        "    if False:\n"
+        "        assert False\n\n"
+        "def test_not_false_and_const_compare() -> None:\n"
+        "    assert not False\n"
+        "    assert 1 != 2\n",
+        encoding="utf-8",
+    )
+
+    res = _run_test_guard(repo)
+    assert res.returncode == 1
+    assert "sneaky_cheat_test.py::test_swallowed_assert" in res.stdout
+    assert "swallowed (try/except) or dead-branch" in res.stdout
+    assert "sneaky_cheat_test.py::test_dead_branch_assert" in res.stdout
+    assert "sneaky_cheat_test.py::test_not_false_and_const_compare" in res.stdout
+    assert "tautological/trivial assertion" in res.stdout
+
+
+def test_gauntlet_blocks_dynamic_sdk_import_and_fixture_pii_leak(tmp_path: Path) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+
+    # Cheat 1: Dynamic SDK import inside processor
+    proc_file = repo / "src" / "app" / "processors" / "order_triage.py"
+    proc_file.write_text(
+        proc_file.read_text(encoding="utf-8")
+        + '\nimport importlib\n_SDK = importlib.import_module("third_party_sdk")\n',
+        encoding="utf-8",
+    )
+    # Cheat 2: Real-looking corporate email + public IPv4 inside replay fixture JSON
+    leaky_fixture = repo / "tests" / "fixtures" / "order_triage" / "leaky_case.json"
+    leaky_fixture.write_text(
+        json.dumps({"customer_email": "alice@realcompany.io", "source_ip": "8.8.8.8"}),
+        encoding="utf-8",
+    )
+
+    res = subprocess.run(
+        [sys.executable, str(repo / "scripts" / "ratchet.py"), "--check"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res.returncode == 1
+    assert "ratchet/direct-sdk-import" in res.stdout
+    assert "ratchet/fixture-real-email" in res.stdout
+    assert "ratchet/fixture-public-ip" in res.stdout
+
+
+def test_gauntlet_scale_benchmark_diff_scoped_parallel_mutation(tmp_path: Path) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    processors_dir = repo / "src" / "app" / "processors"
+
+    # Simulate a 20-module legacy repo with 19 untouched processor modules (100+ extra mutants)
+    for i in range(1, 20):
+        mod = processors_dir / f"legacy_module_{i:02d}.py"
+        mod.write_text(
+            f"def rule_{i:02d}(flag_a: bool, flag_b: bool, code: str) -> bool:\n"
+            "    if flag_a and flag_b and code == 'ok':\n"
+            "        return True\n"
+            "    return False\n",
+            encoding="utf-8",
+        )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add 19 legacy processor modules"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Create a feature branch modifying ONLY 1 processor file
+    subprocess.run(
+        ["git", "checkout", "-b", "sandcastle/perf-bench"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    target = processors_dir / "order_triage.py"
+    target.write_text(target.read_text(encoding="utf-8") + "\n# touch\n", encoding="utf-8")
+
+    started = time.perf_counter()
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts" / "mutation_check.py"),
+            "--root",
+            str(repo),
+            "--base",
+            "main",
+            "--skip-baseline",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    elapsed = time.perf_counter() - started
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "diff-scoped vs main (1 file(s))" in proc.stdout
+    assert elapsed < 25.0, f"Diff-scoped parallel mutation took too long: {elapsed:.2f}s"

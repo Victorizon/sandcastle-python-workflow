@@ -32,6 +32,7 @@ export interface DriftConfig {
   readonly maxTicketMs: number;
   readonly maxToolCalls: number;
   readonly maxRepeatedToolCalls: number;
+  readonly maxOscillationCycles: number;
   readonly maxDiffLines: number;
   readonly maxDiffFiles: number;
   readonly maxContextRatio: number;
@@ -41,6 +42,7 @@ export const DEFAULT_DRIFT_CONFIG: DriftConfig = {
   maxTicketMs: Number(process.env["DRIFT_MAX_MINUTES"] ?? "20") * 60_000,
   maxToolCalls: Number(process.env["DRIFT_MAX_TOOL_CALLS"] ?? "45"),
   maxRepeatedToolCalls: Number(process.env["DRIFT_MAX_REPEATED_TOOLS"] ?? "6"),
+  maxOscillationCycles: Number(process.env["DRIFT_MAX_OSCILLATION_CYCLES"] ?? "3"),
   maxDiffLines: Number(process.env["DRIFT_MAX_DIFF_LINES"] ?? "400"),
   maxDiffFiles: Number(process.env["DRIFT_MAX_DIFF_FILES"] ?? "6"),
   maxContextRatio: Number(process.env["DRIFT_MAX_CONTEXT_RATIO"] ?? "0.78"),
@@ -78,6 +80,7 @@ export class DriftWatchdog {
   private toolCalls = 0;
   private lastToolSignature = "";
   private repeatedCount = 0;
+  private readonly recentSignatures: string[] = [];
   private triggered: DriftDetectedError | null = null;
 
   constructor(config: Partial<DriftConfig> = {}) {
@@ -117,6 +120,11 @@ export class DriftWatchdog {
     this.toolCalls += 1;
 
     const signature = `${event.name}::${event.formattedArgs.trim()}`;
+    this.recentSignatures.push(signature);
+    if (this.recentSignatures.length > 24) {
+      this.recentSignatures.shift();
+    }
+
     if (signature === this.lastToolSignature) {
       this.repeatedCount += 1;
     } else {
@@ -134,6 +142,17 @@ export class DriftWatchdog {
       return;
     }
 
+    const cyclePeriod = this.detectOscillationPeriod();
+    if (cyclePeriod !== null) {
+      this.trip(
+        new DriftDetectedError(
+          "thrash_loop",
+          `ping-pong oscillation loop detected (${cyclePeriod}-step cycle repeated ${this.config.maxOscillationCycles}x)`,
+        ),
+      );
+      return;
+    }
+
     if (this.toolCalls > this.config.maxToolCalls) {
       this.trip(
         new DriftDetectedError(
@@ -142,6 +161,28 @@ export class DriftWatchdog {
         ),
       );
     }
+  }
+
+  private detectOscillationPeriod(): number | null {
+    const repeats = this.config.maxOscillationCycles;
+    if (repeats < 2) return null;
+    for (const period of [2, 3]) {
+      const needed = period * repeats;
+      if (this.recentSignatures.length < needed) continue;
+      const tail = this.recentSignatures.slice(-needed);
+      const pattern = tail.slice(0, period);
+      // Ensure the pattern isn't all identical (handled by maxRepeatedToolCalls)
+      if (new Set(pattern).size <= 1) continue;
+      let matched = true;
+      for (let i = period; i < tail.length; i++) {
+        if (tail[i] !== pattern[i % period]) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) return period;
+    }
+    return null;
   }
 
   checkPostRun(metrics: PostRunMetrics): DriftDetectedError | null {

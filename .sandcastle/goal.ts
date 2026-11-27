@@ -38,6 +38,7 @@ import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
+const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
 
 function currentHeadSha(): string {
   try {
@@ -86,7 +87,7 @@ function writeGapTickets(slug: string, plan: { diagnosis: string; tickets: { tit
 
 function collectPassingPytestNames(): Set<string> {
   try {
-    const out = execFileSync("python3", ["-m", "pytest", "-v"], {
+    const out = execFileSync(PYTHON_BIN, ["-m", "pytest", "-v"], {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -94,6 +95,45 @@ function collectPassingPytestNames(): Set<string> {
   } catch {
     return new Set<string>();
   }
+}
+
+function writeStoppedGoalReport(contract: GoalContract, receipt: GoalReceipt): string {
+  const confidence = scoreGoalConfidence({
+    goalMet: false,
+    commandResults: receipt.lastEvaluation.commandResults,
+    gapPlanRoundsUsed: receipt.gapPlanRoundsUsed,
+  });
+  return writePmHtmlReport({
+    kind: "goal",
+    slug: contract.slug,
+    title: `Goal Stopped: ${contract.name} (${confidence.score}/100)`,
+    status: "blocked",
+    statusLabel: `${confidence.score}/100 · ${confidence.badge}`,
+    executiveSummary: `${receipt.reason} ${confidence.reasons.join(" ")}`,
+    metrics: [
+      { label: "Goal Confidence", value: `${confidence.score}/100`, note: confidence.badge },
+      { label: "Elapsed Time", value: `${receipt.elapsedMinutes}m`, note: `${receipt.cyclesRun} cycle(s)` },
+      { label: "Open Ready Tickets", value: String(receipt.lastEvaluation.openReadyTickets) },
+      { label: "Human Escalations", value: String(receipt.lastEvaluation.openHumanTickets) },
+    ],
+    sections: [
+      {
+        heading: "Last Goal Command Checks",
+        table: {
+          headers: ["Command", "Status", "Exit Code"],
+          rows: receipt.lastEvaluation.commandResults.map((r) => [
+            r.command,
+            r.passed ? "PASS" : "FAIL",
+            String(r.exitCode),
+          ]),
+        },
+      },
+      {
+        heading: "Why Autonomy Stopped",
+        bullets: [receipt.reason, ...confidence.reasons],
+      },
+    ],
+  });
 }
 
 async function runDeterministicSpecAudit(
@@ -193,7 +233,8 @@ async function main(): Promise<void> {
         lastEvaluation: lastEval,
       };
       const receiptPath = writeGoalReceipt(receipt);
-      console.error(`\n[STOP] ${stopReason}\nReceipt saved: ${receiptPath}`);
+      const htmlPath = writeStoppedGoalReport(contract, receipt);
+      console.error(`\n[STOP] ${stopReason}\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
       process.exitCode = 1;
       return;
     }
@@ -215,7 +256,8 @@ async function main(): Promise<void> {
           lastEvaluation: lastEval,
         };
         const receiptPath = writeGoalReceipt(receipt);
-        console.error(`\n[STOP] ${receipt.reason}\nReceipt saved: ${receiptPath}`);
+        const htmlPath = writeStoppedGoalReport(contract, receipt);
+        console.error(`\n[STOP] ${receipt.reason}\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
         process.exitCode = 1;
         return;
       }

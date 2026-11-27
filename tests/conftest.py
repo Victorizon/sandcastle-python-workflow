@@ -13,6 +13,12 @@ settings.register_profile(
     deadline=None,
 )
 settings.register_profile(
+    "mutation",
+    max_examples=10,
+    derandomize=True,
+    deadline=None,
+)
+settings.register_profile(
     "deep",
     max_examples=300,
     derandomize=False,

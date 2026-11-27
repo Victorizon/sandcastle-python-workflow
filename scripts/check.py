@@ -11,6 +11,7 @@ Runs all Brake 1 gates in order:
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,25 @@ def _run_step(label: str, cmd: list[str]) -> bool:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run all 6 deterministic Python quality gates")
+    parser.add_argument(
+        "--allow-harness-edit",
+        action="store_true",
+        help="Forward --allow-harness-edit to test_guard.py for intentional human harness updates",
+    )
+    args = parser.parse_args()
+
+    test_guard_cmd = [
+        sys.executable,
+        "scripts/test_guard.py",
+        "--base",
+        "main",
+        "--coverage-json",
+        COVERAGE_JSON.name,
+    ]
+    if args.allow_harness_edit:
+        test_guard_cmd.append("--allow-harness-edit")
+
     steps: list[tuple[str, list[str]]] = [
         (
             "Format check",
@@ -68,18 +88,11 @@ def main() -> int:
                 f"--cov-report=json:{COVERAGE_JSON.name}",
             ],
         ),
+        ("Strict test guard + coverage floor", test_guard_cmd),
         (
-            "Strict test guard + coverage floor",
-            [
-                sys.executable,
-                "scripts/test_guard.py",
-                "--base",
-                "main",
-                "--coverage-json",
-                COVERAGE_JSON.name,
-            ],
+            "AST mutation check",
+            [sys.executable, "scripts/mutation_check.py", "--base", "main", "--skip-baseline"],
         ),
-        ("AST mutation check", [sys.executable, "scripts/mutation_check.py"]),
     ]
 
     try:

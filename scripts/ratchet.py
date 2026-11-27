@@ -29,8 +29,21 @@ DISABLE_ALLOWLIST: frozenset[str] = frozenset(
     {"scripts/ratchet.py", "tests_tooling/test_workflow_gates.py"}
 )
 
-# Forbidden third-party SDK modules outside src/app/adapters/
+# Forbidden third-party SDK modules outside src/app/adapters/ (direct or dynamic import)
 FORBIDDEN_SDK_RE = re.compile(r"^\s*(?:from|import)\s+third_party_sdk\b")
+FORBIDDEN_DYNAMIC_SDK_RE = re.compile(
+    r"""(?:import_module|__import__)\s*\(\s*["']third_party_sdk(?:\.[^"']*)?["']"""
+)
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+IPV4_RE = re.compile(r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b")
+SAFE_EMAIL_SUFFIXES: tuple[str, ...] = (
+    ".test",
+    ".example",
+    ".invalid",
+    "example.com",
+    "example.org",
+    "example.net",
+)
 DISABLE_COMMENT_RE = re.compile(
     r"#\s*(?:noqa|type:\s*ignore|pyright:\s*ignore|pylint:\s*disable)\b",
     re.IGNORECASE,
@@ -138,6 +151,39 @@ def _collect_pyright() -> list[Violation]:
     return violations
 
 
+def _is_safe_doc_or_private_ipv4(octets: tuple[int, int, int, int]) -> bool:
+    a, b, c, _d = octets
+    if any(o > 255 for o in octets):
+        return True
+    if a in (0, 10, 127) or (a == 192 and b == 168) or (a == 172 and 16 <= b <= 31):
+        return True
+    return (a, b, c) in {(192, 0, 2), (198, 51, 100), (203, 0, 113)}
+
+
+def _collect_fixture_pii_rules() -> list[Violation]:
+    fixtures_dir = ROOT / "tests" / "fixtures"
+    if not fixtures_dir.exists():
+        return []
+    violations: list[Violation] = []
+    for json_file in sorted(fixtures_dir.rglob("*.json")):
+        rel = _normalize_rel(json_file)
+        text = json_file.read_text(encoding="utf-8", errors="replace")
+        for match in EMAIL_RE.finditer(text):
+            domain = match.group(1).lower()
+            if not any(domain == s or domain.endswith(s) for s in SAFE_EMAIL_SUFFIXES):
+                violations.append(Violation(file=rel, rule="ratchet/fixture-real-email"))
+        for match in IPV4_RE.finditer(text):
+            octets = (
+                int(match.group(1)),
+                int(match.group(2)),
+                int(match.group(3)),
+                int(match.group(4)),
+            )
+            if not _is_safe_doc_or_private_ipv4(octets):
+                violations.append(Violation(file=rel, rule="ratchet/fixture-public-ip"))
+    return violations
+
+
 def _collect_custom_rules() -> list[Violation]:
     violations: list[Violation] = []
     for py_file in _iter_python_files():
@@ -147,11 +193,16 @@ def _collect_custom_rules() -> list[Violation]:
         for line in text.splitlines():
             if rel not in DISABLE_ALLOWLIST and DISABLE_COMMENT_RE.search(line):
                 violations.append(Violation(file=rel, rule="ratchet/disable-comment"))
-            if not is_adapter and FORBIDDEN_SDK_RE.match(line):
+            if (
+                not is_adapter
+                and rel not in DISABLE_ALLOWLIST
+                and (FORBIDDEN_SDK_RE.match(line) or FORBIDDEN_DYNAMIC_SDK_RE.search(line))
+            ):
                 violations.append(Violation(file=rel, rule="ratchet/direct-sdk-import"))
             for rule_name, pattern in SECRET_PATTERNS:
                 if pattern.search(line):
                     violations.append(Violation(file=rel, rule=rule_name))
+    violations.extend(_collect_fixture_pii_rules())
     return violations
 
 
