@@ -8,13 +8,13 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import {
   PMDashboard,
   parseCheckMetrics,
   summarizeAgentEventForPm,
 } from "./dashboard.js";
+import { createAgent, createDockerSandbox, resolveAgentKind } from "./agent-factory.js";
 import { formatEndOfRunFooter } from "./coach.js";
 import {
   computeAgentTrustScore,
@@ -35,7 +35,6 @@ import {
   validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
 
-const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
 
@@ -88,9 +87,19 @@ function preflightChecks(): void {
       "HOME is unset. Run inside WSL2 (recommended) or set HOME=$env:USERPROFILE so Sandcastle SessionStore works.",
     );
   }
-  const authPath = path.join(process.env["HOME"], ".codex", "auth.json");
-  if (!existsSync(authPath)) {
-    throw new Error(`Missing Codex auth file at ${authPath}. Run \`codex login\` in WSL2 first.`);
+  const agentKind = resolveAgentKind();
+  if (agentKind === "claude") {
+    const claudeCreds = path.join(process.env["HOME"], ".claude", ".credentials.json");
+    if (!existsSync(claudeCreds) && !process.env["CLAUDE_CODE_OAUTH_TOKEN"] && !existsSync(".sandcastle/.env")) {
+      throw new Error(
+        `Missing Claude credentials at ${claudeCreds} (or CLAUDE_CODE_OAUTH_TOKEN in .sandcastle/.env).`,
+      );
+    }
+  } else {
+    const authPath = path.join(process.env["HOME"], ".codex", "auth.json");
+    if (!existsSync(authPath)) {
+      throw new Error(`Missing Codex auth file at ${authPath}. Run \`codex login\` in WSL2 first.`);
+    }
   }
   try {
     execFileSync("docker", ["info"], { stdio: "ignore" });
@@ -116,16 +125,7 @@ function loadLiveTrackerReadyTickets(): TrackerTicketSnapshot[] {
 }
 
 function makeDocker() {
-  return docker({
-    imageName: IMAGE_NAME,
-    mounts: [
-      {
-        hostPath: "~/.codex/auth.json",
-        sandboxPath: "/home/agent/.codex/auth.json",
-        readonly: true,
-      },
-    ],
-  });
+  return createDockerSandbox(IMAGE_NAME);
 }
 
 function isAheadOfHead(branch: string): boolean {
@@ -209,11 +209,7 @@ async function handleDriftRemediation(
     const splitRun = await sandcastle.run({
       sandbox: makeDocker(),
       name: `Decomposer ${ticket.id}`,
-      agent: sandcastle.codex(MODEL, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
+      agent: createAgent("medium"),
       promptFile: "./.sandcastle/decompose-prompt.md",
       promptArgs: {
         TICKET_ID: ticket.id,
@@ -282,11 +278,7 @@ async function runFreshFixContainer(params: {
   try {
     const fixRun = await fixSandbox.run({
       name: `Fixer ${params.ticket.id}`,
-      agent: sandcastle.codex(MODEL, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
+      agent: createAgent("medium"),
       promptFile: "./.sandcastle/fix-prompt.md",
       promptArgs: {
         TICKET_ID: params.ticket.id,
@@ -385,11 +377,7 @@ async function processTicket(
     try {
       impl = await builderSandbox.run({
         name: `Implementer ${ticket.id}`,
-        agent: sandcastle.codex(MODEL, {
-          effort: "medium",
-          approvalsReviewer: "auto_review",
-          captureSessions: true,
-        }),
+        agent: createAgent("medium"),
         promptFile: "./.sandcastle/implement-prompt.md",
         promptArgs: {
           TICKET_ID: ticket.id,
@@ -571,11 +559,7 @@ async function processTicket(
       });
       const review = await reviewSandbox.run({
         name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
-        agent: sandcastle.codex(MODEL, {
-          effort: "high",
-          approvalsReviewer: "auto_review",
-          captureSessions: true,
-        }),
+        agent: createAgent("high"),
         promptFile: "./.sandcastle/review-prompt.md",
         promptArgs: {
           TICKET_ID: ticket.id,
@@ -675,11 +659,7 @@ async function main(): Promise<void> {
       const planRun = await sandcastle.run({
         sandbox: makeDocker(),
         name: "Planner",
-        agent: sandcastle.codex(MODEL, {
-          effort: "medium",
-          approvalsReviewer: "auto_review",
-          captureSessions: true,
-        }),
+        agent: createAgent("medium"),
         promptFile: "./.sandcastle/plan-prompt.md",
         output: Output.object({
           tag: "plan",
@@ -761,11 +741,7 @@ async function main(): Promise<void> {
         name: "Merger",
         branchStrategy: { type: "head" },
         maxIterations: 4,
-        agent: sandcastle.codex(MODEL, {
-          effort: "medium",
-          approvalsReviewer: "auto_review",
-          captureSessions: true,
-        }),
+        agent: createAgent("medium"),
         promptFile: "./.sandcastle/merge-prompt.md",
         promptArgs: {
           BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
@@ -786,11 +762,7 @@ async function main(): Promise<void> {
         const mergeReview = await sandcastle.run({
           sandbox: makeDocker(),
           name: "Post-Merge Cross-Slice Auditor",
-          agent: sandcastle.codex(MODEL, {
-            effort: "high",
-            approvalsReviewer: "auto_review",
-            captureSessions: true,
-          }),
+          agent: createAgent("high"),
           prompt: [
             `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
             ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),

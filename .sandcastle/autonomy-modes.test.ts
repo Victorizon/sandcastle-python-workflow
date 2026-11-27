@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { resolveAgentKind } from "./agent-factory.js";
 import {
   computeDeterministicScore,
   renderBakeoffReport,
@@ -283,4 +284,11 @@ test("validatePlannedTicketsAgainstTracker drops blocked/unknown tickets and enf
   assert.equal(valid[0]?.id, "feat/01");
   assert.equal(valid[0]?.splitDepth, 1);
   assert.equal(droppedReasons.length, 2);
+});
+
+test("agent-factory defaults to codex and switches cleanly to claude", () => {
+  assert.equal(resolveAgentKind(undefined), "codex");
+  assert.equal(resolveAgentKind("claude"), "claude");
+  assert.equal(resolveAgentKind("claude-code"), "claude");
+  assert.equal(resolveAgentKind("codex"), "codex");
 });

@@ -18,8 +18,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && apt-get update && apt-get install -y gh \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Codex CLI globally so `agent` user can run `codex exec`
-RUN npm install -g @openai/codex
+# Install Codex CLI and Claude Code CLI globally so `agent` user can run either provider
+RUN npm install -g @openai/codex @anthropic-ai/claude-code
 
 # Pre-bake Python dev toolchain into /opt/venv so containers start in <1s without per-run pip installs
 RUN python3 -m venv /opt/venv \

@@ -1,6 +1,19 @@
-# TASK: OVERNIGHT ARCHITECTURE SCOUT (HOT-SPOT DEEPENING)
+# TASK: OVERNIGHT NO-BLOAT ARCHITECTURE & RELIABILITY SCOUT
 
-Scan this repository for **at most {{MAX_PROPOSALS}} high-leverage deepening opportunities** (turning shallow, scattered code into deep, testable modules with clean seams).
+Scan this repository for **at most {{MAX_PROPOSALS}} high-impact, low-bloat improvements**.
+
+# STRICT NO-BLOAT CHARTER
+
+You may ONLY propose improvements in these **4 high-ROI buckets**:
+1. **Real bug fixes & edge-case hardening** (verified failure modes, crash paths, subtle logic bugs)
+2. **Simplification & de-duplication** (turning scattered/duplicated logic into one deeper, smaller, cleaner seam — net-negative or minimal line count)
+3. **Performance & reliability** (faster tests/checks, cleaner error handling, tighter resource bounds)
+4. **High-value missing test coverage** (closing real untested failure modes without trivial filler)
+
+**EXPLICITLY FORBIDDEN:**
+- NEVER invent new CLI commands, new modes, or speculative abstractions.
+- NEVER modify locked referee/governance files (`scripts/check.py`, `scripts/test_guard.py`, `scripts/ratchet.py`, `scripts/mutation_check.py`, `scripts/coverage-baseline.json`, `pyproject.toml`, `tests/conftest.py`).
+- NEVER delete or weaken existing tests or replay fixtures.
 
 # SCOPE FIRST (YAGNI BY GIT CHURN)
 
@@ -16,11 +29,10 @@ Focus primarily on the high-churn hot spots below — do NOT suggest cosmetic re
 
 # RULES
 
-1. Read `GLOSSARY.md`, `docs/adr/`, and `.out-of-scope/` first. Never re-propose anything ruled out in `.out-of-scope/` or settled by an ADR (unless friction is severe — if so, flag it explicitly).
-2. Use exact architecture vocabulary: **module**, **interface**, **depth**, **seam**, **adapter**, **leverage**, **locality**.
-3. Apply the **deletion test**: propose a refactor ONLY if it genuinely consolidates complexity behind a simpler seam rather than moving code around.
-4. Keep every proposal small enough to land safely in a single vertical ticket (`<= 300` lines).
-5. Write `title`, `problem`, `solution`, and `benefits` in **plain English for a Product Manager** so a non-technical reader immediately understands why this makes future changes safer or faster (no dense jargon).
+1. Read `GLOSSARY.md`, `docs/adr/`, and `.out-of-scope/` first. Never re-propose anything ruled out in `.out-of-scope/` or settled by an ADR.
+2. Apply the **deletion test**: propose a change ONLY if it genuinely fixes a bug, cuts duplication, improves reliability/speed, or closes a real test gap.
+3. Keep every proposal small enough to land safely in a single focused PR (`<= 250` diff lines).
+4. Write `title`, `problem`, `solution`, and `benefits` in **plain English for a Product Manager** so a non-technical reader immediately understands what improved and why it matters (zero unexplained jargon).
 
 # OUTPUT
 
@@ -30,20 +42,20 @@ Return ONLY a JSON object inside `<proposals>` tags matching:
 {
   "proposals": [
     {
-      "slug": "deepen-signal-validator",
-      "title": "Deepen signal validation into one cohesive processor seam",
+      "slug": "dedupe-branch-cleanup",
+      "title": "Remove duplicated branch cleanup logic across runners",
       "strength": "strong",
-      "files": ["src/app/processors/order_triage.py"],
-      "problem": "Validation checks are scattered across multiple call sites with poor locality.",
-      "solution": "Consolidate signal validation behind one pure helper returning typed failure reasons.",
-      "benefits": "Higher leverage at the public seam and simpler replay tests.",
+      "files": [".sandcastle/preflight.ts", ".sandcastle/run.ts"],
+      "problem": "Three runner scripts repeat slightly different git cleanup commands, making fixes easy to miss.",
+      "solution": "Consolidate safe branch cleanup into one small shared helper with unit tests.",
+      "benefits": "Fewer lines to maintain and consistent cleanup behavior across all autonomous modes.",
       "acceptance_criteria": [
-        "All existing replay fixtures remain untouched and green",
-        "python scripts/check.py passes with >= 85% mutation kill rate"
+        "python scripts/check.py passes",
+        "npm --prefix .sandcastle run typecheck && npm --prefix .sandcastle test passes"
       ]
     }
   ]
 }
 </proposals>
 
-If no genuinely high-leverage deepening opportunity exists right now, return `{"proposals": []}`.
+If no genuinely high-impact improvement exists right now, return `{"proposals": []}`.
