@@ -14,10 +14,12 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { formatEndOfRunFooter } from "./coach.js";
 import { writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
@@ -314,9 +316,12 @@ async function main(): Promise<void> {
       },
     ],
   });
-  console.log(`\nNightly architecture report saved to: ${reportPath}\nPM HTML report: ${htmlPath}`);
+  console.log(
+    `\nNightly architecture report saved to: ${reportPath}\nPM HTML report: ${htmlPath}` +
+      formatEndOfRunFooter({ kind: "nightly-arch", reportPath: htmlPath }),
+  );
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   await main();
 }

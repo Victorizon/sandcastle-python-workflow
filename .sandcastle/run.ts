@@ -15,6 +15,7 @@ import {
   parseCheckMetrics,
   summarizeAgentEventForPm,
 } from "./dashboard.js";
+import { formatEndOfRunFooter } from "./coach.js";
 import {
   computeAgentTrustScore,
   loadHumanRatings,
@@ -693,7 +694,8 @@ async function main(): Promise<void> {
       ],
     });
     console.log(
-      `Confidence: ${conf.overall.score}/100 (${conf.overall.badge})\nPM HTML report saved to: ${htmlPath}`,
+      `Confidence: ${conf.overall.score}/100 (${conf.overall.badge})\nPM HTML report saved to: ${htmlPath}` +
+        formatEndOfRunFooter({ kind: "factory", reportPath: htmlPath }),
     );
     await dashboard.close();
   }

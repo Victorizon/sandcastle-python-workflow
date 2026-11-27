@@ -32,3 +32,4 @@ Single-context repo (`GLOSSARY.md` + `docs/adr/`). Read `GLOSSARY.md` and releva
 - **External SDK boundary:** All calls to third-party APIs/SDKs live strictly under `src/app/adapters/` (see `docs/adr/0001-external-client-adapter-boundary.md`).
 - **Safety invariant:** Processing logic must fail closed on errors or missing signals (see `docs/adr/0002-fail-closed-decisions.md`).
 - **Rejected ideas:** Check `.out-of-scope/` before proposing architectural changes.
+- **Shadow Guide (workflow coach):** Run `npm --prefix .sandcastle run coach` or use the `.agents/skills/workflow-coach` skill for live state-aware next steps and latest PM HTML reports.

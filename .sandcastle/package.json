@@ -11,8 +11,9 @@
     "tune": "tsx tuner.ts",
     "rate": "tsx rate.ts",
     "trust": "tsx trust.ts",
+    "coach": "tsx coach.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test drift-watchdog.test.ts dashboard.test.ts tuner.test.ts autonomy-modes.test.ts confidence.test.ts"
+    "test": "tsx --test drift-watchdog.test.ts dashboard.test.ts tuner.test.ts autonomy-modes.test.ts confidence.test.ts coach.test.ts"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.14.1",

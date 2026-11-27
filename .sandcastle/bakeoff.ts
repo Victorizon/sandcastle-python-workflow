@@ -14,10 +14,12 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { formatEndOfRunFooter } from "./coach.js";
 import { parseCheckMetrics } from "./dashboard.js";
 import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
@@ -359,9 +361,16 @@ async function main(): Promise<void> {
       },
     ],
   });
-  console.log(`\n=== Bake-Off Winner: Variant ${judgeRun.output.winner} ===\nReport: ${reportPath}\nPM HTML: ${htmlPath}`);
+  console.log(
+    `\n=== Bake-Off Winner: Variant ${judgeRun.output.winner} ===\nReport: ${reportPath}\nPM HTML: ${htmlPath}` +
+      formatEndOfRunFooter({
+        kind: "bakeoff",
+        reportPath: htmlPath,
+        extraCommand: `git diff main..prototype/${slug}-${judgeRun.output.winner.toLowerCase()}`,
+      }),
+  );
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   await main();
 }

@@ -591,6 +591,10 @@
       <p class="panel-sub">Click Copy on any command below to run it directly from your repo root in WSL2.</p>
       <div class="cheat-grid">
         <div class="cheat-item">
+          <div class="cheat-goal">Ask Shadow Guide what to do next + see latest reports</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run coach</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
           <div class="cheat-goal">Verify all 5 workflow layers before shipping</div>
           <div class="cmd-row"><code>python scripts/verify_workflow_ready.py</code><button class="copy-btn" type="button">Copy</button></div>
         </div>
@@ -650,7 +654,7 @@
       <button class="pill" data-cat="trust" type="button">Confidence &amp; Trust</button>
       <button class="pill" data-cat="reports" type="button">Reports &amp; Tuning</button>
       <button class="pill" data-cat="legacy" type="button">Legacy Refactoring</button>
-      <span id="match-count" class="match-count">14 features shown</span>
+      <span id="match-count" class="match-count">15 features shown</span>
     </div>
 
     <!-- FEATURE CARDS -->
@@ -1113,6 +1117,36 @@
               <span class="file-pill">docs/EASY_TO_CHANGE_GUIDE.md</span>
               <span class="file-pill">docs/AUTONOMY_AND_BOTS_GUIDE.md</span>
               <span class="file-pill">scripts/verify_workflow_ready.py</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 15. SHADOW GUIDE & MULTI-ROUND CASSETTE PATTERN -->
+      <article class="card" data-cat="daily" data-search="coach shadow guide workflow-coach nudge report cassette multi-round sdk">
+        <div class="card-top">
+          <span class="tag daily">Daily Workflow · Active Coach</span>
+          <span class="det-chip">0-Token CLI + Codex Skill</span>
+        </div>
+        <h3>15. Shadow Guide (Workflow Coach) &amp; Multi-Round Case Cassettes</h3>
+        <p class="card-desc">
+          Inspects your live git state, ticket board, latest PM HTML reports, unrated runs, and Agent Trust Tier to nudge you
+          toward the exact next command — plus a copy-pasteable VCR-style Case Cassette pattern for multi-round SDK scripts.
+        </p>
+        <div class="cmd-row"><code>npm --prefix .sandcastle run coach</code><button class="copy-btn" type="button">Copy</button></div>
+        <details class="tech">
+          <summary>Technical Details — Live Signals, End-of-Run Footers &amp; Codex Persona</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Deterministic CLI (<code>.sandcastle/coach.ts</code>):</strong> Checks <code>ready-for-human</code> blockers, uncommitted <code>src/</code> edits on <code>main</code>, latest <code>.sandcastle/logs/reports/*.html</code> path, unrated runs, processor Hypothesis deep-fuzz reminders, 10-run Tuner unlock, and stale branch buildup.</li>
+              <li><strong>Automatic End-of-Run Footers:</strong> Every completed <code>factory</code>, <code>goal</code>, <code>nightly-arch</code>, <code>bakeoff</code>, and <code>tune</code> run prints a 3-line Shadow Guide block reminding you to open the HTML report and log <code>rate</code>.</li>
+              <li><strong>Interactive Codex Skill:</strong> Ask Codex in VS Code (<code>workflow-coach</code> skill) how to tackle any task; it runs <code>coach</code> first so advice matches live workspace facts. Never loaded into Docker workers.</li>
+              <li><strong>Multi-Round SDK Testing:</strong> See <code>docs/MULTI_ROUND_CASSETTE_PATTERN.md</code> for wrapping multi-round SDK queries behind a thin adapter + stateful Case Cassette fake that verifies both final verdicts and issued Round 1/Round 2 queries offline.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">.sandcastle/coach.ts</span>
+              <span class="file-pill">.agents/skills/workflow-coach/SKILL.md</span>
+              <span class="file-pill">docs/MULTI_ROUND_CASSETTE_PATTERN.md</span>
             </div>
           </div>
         </details>

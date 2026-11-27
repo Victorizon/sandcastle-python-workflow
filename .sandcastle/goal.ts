@@ -13,9 +13,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { formatEndOfRunFooter } from "./coach.js";
 import {
   SpecAuditOutputSchema,
   type VerifiedSpecAudit,
@@ -396,10 +398,11 @@ async function main(): Promise<void> {
     sections: reportSections,
   });
   console.log(
-    `\n=== GOAL MET (${confidence.score}/100 · ${confidence.badge}) ===\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`,
+    `\n=== GOAL MET (${confidence.score}/100 · ${confidence.badge}) ===\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}` +
+      formatEndOfRunFooter({ kind: "goal", reportPath: htmlPath }),
   );
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   await main();
 }
