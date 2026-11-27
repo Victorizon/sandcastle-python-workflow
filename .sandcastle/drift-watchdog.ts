@@ -36,6 +36,7 @@ export interface DriftConfig {
   readonly maxDiffLines: number;
   readonly maxDiffFiles: number;
   readonly maxContextRatio: number;
+  readonly maxContextTokens: number;
 }
 
 export const DEFAULT_DRIFT_CONFIG: DriftConfig = {
@@ -46,6 +47,8 @@ export const DEFAULT_DRIFT_CONFIG: DriftConfig = {
   maxDiffLines: Number(process.env["DRIFT_MAX_DIFF_LINES"] ?? "400"),
   maxDiffFiles: Number(process.env["DRIFT_MAX_DIFF_FILES"] ?? "6"),
   maxContextRatio: Number(process.env["DRIFT_MAX_CONTEXT_RATIO"] ?? "0.78"),
+  /** Hard absolute "smart zone" token ceiling (default 130,000 tokens). */
+  maxContextTokens: Number(process.env["DRIFT_MAX_CONTEXT_TOKENS"] ?? "130000"),
 };
 
 export interface PostRunMetrics {
@@ -199,6 +202,17 @@ export class DriftWatchdog {
       return new DriftDetectedError(
         "diff_size_explosion",
         `changed ${metrics.diffLines} lines (limit ${this.config.maxDiffLines}); slice is too large`,
+      );
+    }
+
+    if (
+      metrics.contextTokens !== undefined &&
+      this.config.maxContextTokens > 0 &&
+      metrics.contextTokens >= this.config.maxContextTokens
+    ) {
+      return new DriftDetectedError(
+        "context_rot",
+        `context reached ${metrics.contextTokens.toLocaleString("en-US")} tokens (hard smart-zone cap ${this.config.maxContextTokens.toLocaleString("en-US")}); slice is too dense`,
       );
     }
 

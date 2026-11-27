@@ -271,7 +271,12 @@ def run_mutation_suite(config: MutationConfig) -> int:
 
 
 def main() -> int:
-    default_workers = max(1, min(4, os.cpu_count() or 2))
+    env_workers = os.environ.get("MUTATION_WORKERS")
+    default_workers = (
+        max(1, int(env_workers))
+        if env_workers and env_workers.isdigit()
+        else max(1, min(4, os.cpu_count() or 2))
+    )
     parser = argparse.ArgumentParser(description="Fast parallel AST mutation checker")
     parser.add_argument(
         "--root",

@@ -34,6 +34,7 @@ RUN python3 -m venv /opt/venv \
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/home/agent/workspace/src"
+ENV MUTATION_WORKERS="2"
 
 # Ensure both login shells (`bash -lc`) and non-login shells find /opt/venv tools
 RUN for bin in python python3 pip ruff pyright pytest lint-imports; do \
@@ -45,9 +46,11 @@ RUN for bin in python python3 pip ruff pyright pytest lint-imports; do \
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
+# Lock /opt/venv owned by root and strictly read-only so agents can execute referees, NEVER tamper with them
 RUN groupmod -o -g $AGENT_GID node \
   && usermod -o -u $AGENT_UID -g $AGENT_GID -d /home/agent -m -l agent node \
-  && chown -R ${AGENT_UID}:${AGENT_GID} /opt/venv
+  && chown -R root:root /opt/venv \
+  && chmod -R a-w /opt/venv
 
 USER ${AGENT_UID}:${AGENT_GID}
 WORKDIR /home/agent

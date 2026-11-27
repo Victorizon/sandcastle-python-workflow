@@ -217,6 +217,11 @@ async function handleDriftRemediation(
     execFileSync("git", ["commit", "-m", `chore(watchdog): auto-split drifted ticket ${ticket.id}`], {
       stdio: "ignore",
     });
+    try {
+      execFileSync("git", ["branch", "-D", ticket.branch], { stdio: "ignore" });
+    } catch {
+      // Branch may not exist yet if drift occurred before first commit
+    }
 
     dashboard.upsertSlice(ticket.id, {
       stage: "split",
@@ -253,94 +258,103 @@ async function processTicket(
     branch: ticket.branch,
     splitDepth: ticket.splitDepth,
     stage: "implementing",
-    pmSummary: "Booting isolated Docker container & starting TDD implementation...",
+    pmSummary: "Booting isolated Builder container & starting TDD implementation...",
   });
 
+  // Phase A: Isolated Builder container (disposed immediately once commit or drift finishes)
+  let impl: sandcastle.SandboxRunResult;
+  {
+    await using builderSandbox = await sandcastle.createSandbox({
+      sandbox: makeDocker(),
+      branch: ticket.branch,
+    });
+
+    const watchdog = new DriftWatchdog();
+    try {
+      impl = await builderSandbox.run({
+        name: `Implementer ${ticket.id}`,
+        agent: sandcastle.codex(MODEL, {
+          effort: "medium",
+          approvalsReviewer: "auto_review",
+          captureSessions: true,
+        }),
+        promptFile: "./.sandcastle/implement-prompt.md",
+        promptArgs: {
+          TICKET_ID: ticket.id,
+          TICKET_TITLE: ticket.title,
+          BRANCH: ticket.branch,
+        },
+        maxIterations: MAX_IMPLEMENT_ITERATIONS,
+        signal: watchdog.signal,
+        logging: {
+          type: "file",
+          path: logPath,
+          onAgentStreamEvent: (ev) => {
+            watchdog.onEvent(ev);
+            const pmNote = summarizeAgentEventForPm(ev);
+            if (pmNote) {
+              dashboard.upsertSlice(ticket.id, {
+                pmSummary: pmNote,
+                watchdog: {
+                  elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
+                  toolCalls: watchdog.toolCallCount,
+                },
+              });
+            }
+          },
+        },
+      });
+    } catch (err) {
+      watchdog.dispose();
+      const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
+      if (drift) {
+        const stat = await builderSandbox.exec("git diff --stat main..HEAD");
+        const decomposed = await handleDriftRemediation(ticket, drift, stat.stdout.trim(), dashboard);
+        return { approved: false, decomposed };
+      }
+      throw err;
+    } finally {
+      watchdog.dispose();
+    }
+
+    const numstat = await builderSandbox.exec("git diff --numstat main..HEAD");
+    const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
+    const lastCtx = impl.iterations.at(-1)?.contextWindow;
+    const ctxPct =
+      lastCtx?.limit && lastCtx.limit > 0 ? Math.round((lastCtx.tokens / lastCtx.limit) * 100) : 0;
+    dashboard.upsertSlice(ticket.id, {
+      watchdog: {
+        elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
+        toolCalls: watchdog.toolCallCount,
+        diffLines,
+        contextPercent: ctxPct,
+      },
+    });
+
+    const postDrift = watchdog.checkPostRun({
+      diffFiles,
+      diffLines,
+      contextTokens: lastCtx?.tokens,
+      contextLimit: lastCtx?.limit,
+      completed: impl.completionSignal !== undefined,
+    });
+    if (postDrift) {
+      const stat = await builderSandbox.exec("git diff --stat main..HEAD");
+      const decomposed = await handleDriftRemediation(ticket, postDrift, stat.stdout.trim(), dashboard);
+      return { approved: false, decomposed };
+    }
+  }
+
+  // Phase B: Fresh, zero-trust Verifier & Reviewer container booted strictly from committed branch
   await using sandbox = await sandcastle.createSandbox({
     sandbox: makeDocker(),
     branch: ticket.branch,
   });
 
-  const watchdog = new DriftWatchdog();
-  let impl: sandcastle.SandboxRunResult;
-  try {
-    impl = await sandbox.run({
-      name: `Implementer ${ticket.id}`,
-      agent: sandcastle.codex(MODEL, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
-      promptFile: "./.sandcastle/implement-prompt.md",
-      promptArgs: {
-        TICKET_ID: ticket.id,
-        TICKET_TITLE: ticket.title,
-        BRANCH: ticket.branch,
-      },
-      maxIterations: MAX_IMPLEMENT_ITERATIONS,
-      signal: watchdog.signal,
-      logging: {
-        type: "file",
-        path: logPath,
-        onAgentStreamEvent: (ev) => {
-          watchdog.onEvent(ev);
-          const pmNote = summarizeAgentEventForPm(ev);
-          if (pmNote) {
-            dashboard.upsertSlice(ticket.id, {
-              pmSummary: pmNote,
-              watchdog: {
-                elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
-                toolCalls: watchdog.toolCallCount,
-              },
-            });
-          }
-        },
-      },
-    });
-  } catch (err) {
-    watchdog.dispose();
-    const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
-    if (drift) {
-      const stat = await sandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(ticket, drift, stat.stdout.trim(), dashboard);
-      return { approved: false, decomposed };
-    }
-    throw err;
-  } finally {
-    watchdog.dispose();
-  }
-
-  const numstat = await sandbox.exec("git diff --numstat main..HEAD");
-  const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
-  const lastCtx = impl.iterations.at(-1)?.contextWindow;
-  const ctxPct =
-    lastCtx?.limit && lastCtx.limit > 0 ? Math.round((lastCtx.tokens / lastCtx.limit) * 100) : 0;
-  dashboard.upsertSlice(ticket.id, {
-    watchdog: {
-      elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
-      toolCalls: watchdog.toolCallCount,
-      diffLines,
-      contextPercent: ctxPct,
-    },
-  });
-
-  const postDrift = watchdog.checkPostRun({
-    diffFiles,
-    diffLines,
-    contextTokens: lastCtx?.tokens,
-    contextLimit: lastCtx?.limit,
-    completed: impl.completionSignal !== undefined,
-  });
-  if (postDrift) {
-    const stat = await sandbox.exec("git diff --stat main..HEAD");
-    const decomposed = await handleDriftRemediation(ticket, postDrift, stat.stdout.trim(), dashboard);
-    return { approved: false, decomposed };
-  }
-
-  // Deterministic shell verification gate
+  // Deterministic shell verification gate in fresh container (read-only /opt/venv)
   dashboard.upsertSlice(ticket.id, {
     stage: "verifying",
-    pmSummary: "Referee running 6 mechanical checks (format, ratchet, boundaries, coverage, anti-tamper, mutation)...",
+    pmSummary: "Fresh Verifier container running 6 mechanical checks (format, ratchet, boundaries, coverage, anti-tamper, mutation)...",
   });
   let checkPassed = false;
   for (let attempt = 0; attempt <= MAX_VERIFY_RETRIES; attempt++) {

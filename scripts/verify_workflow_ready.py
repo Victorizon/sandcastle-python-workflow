@@ -174,6 +174,7 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             ".sandcastle/bakeoff-judge-prompt.md",
             ".sandcastle/autonomy-modes.test.ts",
             ".sandcastle/e2e-synthetic.ts",
+            ".sandcastle/bench.ts",
             "docs/AUTONOMY_AND_BOTS_GUIDE.md",
             ".sandcastle/plan-prompt.md",
             ".sandcastle/implement-prompt.md",

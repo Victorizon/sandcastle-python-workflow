@@ -91,6 +91,17 @@ test("detects diff explosion, file explosion, and context rot post-run", () => {
       completed: false,
     });
     assert.equal(contextRot?.kind, "context_rot");
+
+    // Hard 130k absolute token cap fires EVEN when completed === true on a huge 400k window!
+    const hardTokenCap = wd.checkPostRun({
+      diffFiles: 1,
+      diffLines: 20,
+      contextTokens: 135_000,
+      contextLimit: 400_000,
+      completed: true,
+    });
+    assert.equal(hardTokenCap?.kind, "context_rot");
+    assert.match(hardTokenCap?.detail ?? "", /130,000/u);
   } finally {
     wd.dispose();
   }

@@ -42,6 +42,7 @@ export interface SliceConfidenceInput {
   readonly challengeCount: number;
   readonly diffLines: number;
   readonly contextPercent: number;
+  readonly contextTokens?: number;
   readonly missingSpecItems?: number;
   readonly scopeCreepCount?: number;
   readonly standardsViolations?: number;
@@ -224,7 +225,13 @@ export function scoreSliceConfidence(input: SliceConfidenceInput): ConfidenceAss
     reasons.push(`Moderate diff size (${input.diffLines} lines).`);
   }
 
-  if (input.contextPercent > 75) {
+  if (input.contextTokens !== undefined && input.contextTokens >= 130_000) {
+    cap = Math.min(cap, 72);
+    score -= 10;
+    reasons.push(
+      `Context reached ${input.contextTokens.toLocaleString("en-US")} tokens (>= 130k smart-zone cap).`,
+    );
+  } else if (input.contextPercent > 75) {
     score -= 8;
     reasons.push(`High context usage (${input.contextPercent}%) near context-rot threshold.`);
   }

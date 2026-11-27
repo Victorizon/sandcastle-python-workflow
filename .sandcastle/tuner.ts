@@ -32,7 +32,8 @@ export type TunableParam =
   | "DRIFT_MAX_REPEATED_TOOLS"
   | "DRIFT_MAX_DIFF_LINES"
   | "DRIFT_MAX_DIFF_FILES"
-  | "DRIFT_MAX_CONTEXT_RATIO";
+  | "DRIFT_MAX_CONTEXT_RATIO"
+  | "DRIFT_MAX_CONTEXT_TOKENS";
 
 export const SAFETY_CLAMPS: Record<TunableParam, { readonly min: number; readonly max: number }> = {
   DRIFT_MAX_MINUTES: { min: 10, max: 35 },
@@ -41,6 +42,7 @@ export const SAFETY_CLAMPS: Record<TunableParam, { readonly min: number; readonl
   DRIFT_MAX_DIFF_LINES: { min: 150, max: 500 },
   DRIFT_MAX_DIFF_FILES: { min: 3, max: 10 },
   DRIFT_MAX_CONTEXT_RATIO: { min: 0.65, max: 0.85 },
+  DRIFT_MAX_CONTEXT_TOKENS: { min: 80_000, max: 160_000 },
 };
 
 export const TuningProposalSchema = z.object({
@@ -54,6 +56,7 @@ export const TuningProposalSchema = z.object({
         "DRIFT_MAX_DIFF_LINES",
         "DRIFT_MAX_DIFF_FILES",
         "DRIFT_MAX_CONTEXT_RATIO",
+        "DRIFT_MAX_CONTEXT_TOKENS",
       ]),
       currentValue: z.number(),
       proposedValue: z.number(),

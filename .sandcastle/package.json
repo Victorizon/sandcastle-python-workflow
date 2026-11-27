@@ -8,6 +8,7 @@
     "nightly-arch": "tsx nightly-arch.ts",
     "bakeoff": "tsx bakeoff.ts",
     "e2e": "tsx e2e-synthetic.ts",
+    "bench": "tsx bench.ts",
     "tune": "tsx tuner.ts",
     "rate": "tsx rate.ts",
     "trust": "tsx trust.ts",
