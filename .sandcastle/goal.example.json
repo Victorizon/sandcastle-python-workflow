@@ -1,0 +1,11 @@
+{
+  "name": "Extract and verify clean order signal rules",
+  "slug": "signal-rules-goal",
+  "requireAllTicketsResolved": true,
+  "verifyCommands": [
+    "python scripts/check.py"
+  ],
+  "maxTotalMinutes": 180,
+  "maxStalledCycles": 2,
+  "maxGapPlanRounds": 2
+}
