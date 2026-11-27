@@ -1,18 +1,6 @@
 /**
  * Deterministic Outer Orchestrator for Matt Pocock's Workflow (Codex + Docker + Python)
- * with Built-In Deterministic Drift Watchdog & 1-Shot Re-Slicer (Decomposer).
- *
- * The LLM NEVER owns the outer loop. TypeScript owns every phase transition and hard cap:
- *   1. Planner (Output.object Zod schema) -> picks unblocked ready-for-agent tickets
- *   2. Bounded-concurrency warm containers (createSandbox):
- *      - DriftWatchdog monitors wall-clock timeout, tool-call thrash, diff blast radius, & context rot
- *      - Implementer (Codex medium, maxIterations=4, cancellable via AbortSignal)
- *      - On drift: kills worker cleanly; if splitDepth < MAX_AUTO_SPLITS (1), wakes fresh Decomposer
- *        to re-slice into 2-3 smaller tickets; otherwise escalates directly to `ready-for-human`
- *      - Hard anti-tampering lock: `python scripts/test_guard.py --base main` (immediate escalation)
- *      - Deterministic 6-gate shell check: `python scripts/check.py` (capped resume-fix max 2)
- *      - Fresh-context Adversarial Reviewer (Codex high + CODING_STANDARDS.md, capped max 2 rounds)
- *   3. Merger (host head mode) -> merges reviewed branches, runs check.py, resolves tickets
+ * with Built-In Deterministic Drift Watchdog, 1-Shot Re-Slicer, and Live PM Mission Control Dashboard.
  */
 
 import { execFileSync } from "node:child_process";
@@ -22,6 +10,11 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import {
+  PMDashboard,
+  parseCheckMetrics,
+  summarizeAgentEventForPm,
+} from "./dashboard.js";
 import {
   DriftDetectedError,
   DriftWatchdog,
@@ -115,7 +108,17 @@ function isAheadOfHead(branch: string): boolean {
   }
 }
 
-function escalateTicketToHuman(ticketId: string, reason: string): void {
+function escalateTicketToHuman(ticketId: string, reason: string, dashboard: PMDashboard): void {
+  dashboard.upsertSlice(ticketId, {
+    stage: "needs_human",
+    pmSummary: `Escalated to human review: ${reason}`,
+  });
+  dashboard.addEvent({
+    sliceId: ticketId,
+    level: "error",
+    headline: "Escalated slice to human attention",
+    detail: reason,
+  });
   try {
     execFileSync("python3", ["scripts/local_tracker.py", "comment", ticketId, "--body", reason], {
       stdio: "inherit",
@@ -143,18 +146,34 @@ async function handleDriftRemediation(
   ticket: PlannedTicket,
   drift: DriftDetectedError,
   partialDiffStat: string,
+  dashboard: PMDashboard,
 ): Promise<boolean> {
   console.warn(`  [DRIFT] ${ticket.id}: ${drift.message}`);
 
   if (ticket.splitDepth >= MAX_AUTO_SPLITS) {
+    dashboard.recordChallenge(ticket.id, {
+      source: "drift_watchdog",
+      finding: `${drift.message} (max split depth ${MAX_AUTO_SPLITS} reached)`,
+      outcome: "escalated",
+    });
     escalateTicketToHuman(
       ticket.id,
-      `Drift Watchdog stopped ticket (${drift.message}). Already at split depth ${ticket.splitDepth}/${MAX_AUTO_SPLITS} — escalating to human instead of splitting again.`,
+      `Drift Watchdog stopped ticket (${drift.message}). Already at split depth ${ticket.splitDepth}/${MAX_AUTO_SPLITS}.`,
+      dashboard,
     );
     return false;
   }
 
-  console.log(`  [DECOMPOSE] Waking fresh Decomposer to split ${ticket.id} into smaller slices...`);
+  dashboard.recordChallenge(ticket.id, {
+    source: "drift_watchdog",
+    finding: `${drift.message} — waking Decomposer to split into smaller slices.`,
+    outcome: "split",
+  });
+  dashboard.upsertSlice(ticket.id, {
+    stage: "remediating",
+    pmSummary: "Stopped by Drift Watchdog — Decomposer breaking ticket into 2–3 smaller vertical slices.",
+  });
+
   try {
     const splitRun = await sandcastle.run({
       sandbox: makeDocker(),
@@ -189,29 +208,50 @@ async function handleDriftRemediation(
     execFileSync("git", ["commit", "-m", `chore(watchdog): auto-split drifted ticket ${ticket.id}`], {
       stdio: "ignore",
     });
-    console.log(`  [DECOMPOSE] Split ${ticket.id} into ${splitRun.output.subtickets.length} smaller sub-ticket(s).`);
+
+    dashboard.upsertSlice(ticket.id, {
+      stage: "split",
+      pmSummary: `Auto-split into ${splitRun.output.subtickets.length} smaller sub-slices after drift detection.`,
+    });
+    dashboard.addEvent({
+      sliceId: ticket.id,
+      level: "challenge",
+      headline: `DriftWatchdog auto-split oversized ticket into ${splitRun.output.subtickets.length} slices`,
+      detail: drift.message,
+    });
     return true;
   } catch (err) {
     escalateTicketToHuman(
       ticket.id,
       `Drift Watchdog fired (${drift.message}) and Decomposer failed (${err instanceof Error ? err.message : String(err)}).`,
+      dashboard,
     );
     return false;
   }
 }
 
-async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean; decomposed: boolean }> {
-  console.log(`\n--> Starting ${ticket.id} (depth=${ticket.splitDepth}) on branch ${ticket.branch}`);
+async function processTicket(
+  ticket: PlannedTicket,
+  dashboard: PMDashboard,
+): Promise<{ approved: boolean; decomposed: boolean }> {
+  const startedAtMs = Date.now();
   mkdirSync(".sandcastle/logs", { recursive: true });
   const safeId = ticket.id.replaceAll(/[^a-z0-9_-]/giu, "-");
   const logPath = `.sandcastle/logs/${safeId}-implement.log`;
+
+  dashboard.upsertSlice(ticket.id, {
+    title: ticket.title,
+    branch: ticket.branch,
+    splitDepth: ticket.splitDepth,
+    stage: "implementing",
+    pmSummary: "Booting isolated Docker container & starting TDD implementation...",
+  });
 
   await using sandbox = await sandcastle.createSandbox({
     sandbox: makeDocker(),
     branch: ticket.branch,
   });
 
-  // Step 2a: Implementer supervised by Deterministic Drift Watchdog
   const watchdog = new DriftWatchdog();
   let impl: sandcastle.SandboxRunResult;
   try {
@@ -233,17 +273,27 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
       logging: {
         type: "file",
         path: logPath,
-        onAgentStreamEvent: (ev) => watchdog.onEvent(ev),
+        onAgentStreamEvent: (ev) => {
+          watchdog.onEvent(ev);
+          const pmNote = summarizeAgentEventForPm(ev);
+          if (pmNote) {
+            dashboard.upsertSlice(ticket.id, {
+              pmSummary: pmNote,
+              watchdog: {
+                elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
+                toolCalls: watchdog.toolCallCount,
+              },
+            });
+          }
+        },
       },
     });
   } catch (err) {
     watchdog.dispose();
-    const drift =
-      watchdog.drift ??
-      (err instanceof DriftDetectedError ? err : null);
+    const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
     if (drift) {
       const stat = await sandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(ticket, drift, stat.stdout.trim());
+      const decomposed = await handleDriftRemediation(ticket, drift, stat.stdout.trim(), dashboard);
       return { approved: false, decomposed };
     }
     throw err;
@@ -251,10 +301,20 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
     watchdog.dispose();
   }
 
-  // Step 2b: Post-run deterministic drift inspection (diff blast radius & context rot)
   const numstat = await sandbox.exec("git diff --numstat main..HEAD");
   const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
   const lastCtx = impl.iterations.at(-1)?.contextWindow;
+  const ctxPct =
+    lastCtx?.limit && lastCtx.limit > 0 ? Math.round((lastCtx.tokens / lastCtx.limit) * 100) : 0;
+  dashboard.upsertSlice(ticket.id, {
+    watchdog: {
+      elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
+      toolCalls: watchdog.toolCallCount,
+      diffLines,
+      contextPercent: ctxPct,
+    },
+  });
+
   const postDrift = watchdog.checkPostRun({
     diffFiles,
     diffLines,
@@ -264,35 +324,51 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
   });
   if (postDrift) {
     const stat = await sandbox.exec("git diff --stat main..HEAD");
-    const decomposed = await handleDriftRemediation(ticket, postDrift, stat.stdout.trim());
+    const decomposed = await handleDriftRemediation(ticket, postDrift, stat.stdout.trim(), dashboard);
     return { approved: false, decomposed };
   }
 
-  // Step 2c: Deterministic shell verification gate (never trust LLM self-report)
+  // Deterministic shell verification gate
+  dashboard.upsertSlice(ticket.id, {
+    stage: "verifying",
+    pmSummary: "Referee running 6 mechanical checks (format, ratchet, boundaries, coverage, anti-tamper, mutation)...",
+  });
   let checkPassed = false;
   for (let attempt = 0; attempt <= MAX_VERIFY_RETRIES; attempt++) {
     const guardRes = await sandbox.exec("python scripts/test_guard.py --base main");
     if (guardRes.exitCode !== 0) {
+      dashboard.recordChallenge(ticket.id, {
+        source: "test_guard",
+        finding: "Blocked attempt to delete or weaken existing tests/fixtures.",
+        outcome: "blocked",
+      });
       escalateTicketToHuman(
         ticket.id,
-        `BLOCKED by strict test lock (\`scripts/test_guard.py\`): agent attempted to delete/weaken existing tests or fixtures.\n\n${guardRes.stdout}`,
+        `BLOCKED by strict test lock (\`scripts/test_guard.py\`):\n\n${guardRes.stdout}`,
+        dashboard,
       );
       return { approved: false, decomposed: false };
     }
 
     const checkRes = await sandbox.exec("python scripts/check.py");
     if (checkRes.exitCode === 0) {
+      const q = parseCheckMetrics(checkRes.stdout);
+      dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
       checkPassed = true;
       break;
     }
     if (attempt === MAX_VERIFY_RETRIES) {
       escalateTicketToHuman(
         ticket.id,
-        `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fix resumes. Branch \`${ticket.branch}\` preserved for human inspection.`,
+        `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fix resumes.`,
+        dashboard,
       );
       return { approved: false, decomposed: false };
     }
-    console.log(`  [verify retry ${attempt + 1}/${MAX_VERIFY_RETRIES}] resuming implementer...`);
+    dashboard.upsertSlice(ticket.id, {
+      stage: "remediating",
+      pmSummary: `6-gate check failed — Builder fixing reported issues (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES})...`,
+    });
     await impl.resume?.(
       `\`python scripts/check.py\` failed (exit ${checkRes.exitCode}):\n\n${checkRes.stdout}\n${checkRes.stderr}\n\nFix the failures WITHOUT deleting/weakening existing tests or fixtures, re-run \`python scripts/check.py\`, commit your fix, and output <promise>COMPLETE</promise>.`,
     );
@@ -302,8 +378,12 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
     return { approved: false, decomposed: false };
   }
 
-  // Step 2d: Fresh-context Adversarial Reviewer (high effort + CODING_STANDARDS.md, capped rounds)
+  // Fresh-context Adversarial Reviewer
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
+    dashboard.upsertSlice(ticket.id, {
+      stage: "reviewing",
+      pmSummary: `Fresh Adversarial Reviewer checking diff against spec & CODING_STANDARDS.md (round ${round}/${MAX_REVIEW_ROUNDS})...`,
+    });
     const review = await sandbox.run({
       name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
       agent: sandcastle.codex(MODEL, {
@@ -324,19 +404,52 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
     const verdict = parseVerdict(review.stdout);
 
     if (postReviewCheck.exitCode === 0 && verdict?.approved) {
-      console.log(`  [PASS] Reviewer approved ${ticket.id}: ${verdict.summary}`);
+      const q = parseCheckMetrics(postReviewCheck.stdout);
+      dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
+      dashboard.upsertSlice(ticket.id, {
+        stage: "merging",
+        pmSummary: `Approved by Fresh Reviewer: ${verdict.summary}`,
+      });
+      dashboard.addEvent({
+        sliceId: ticket.id,
+        level: "success",
+        headline: "Passed 6 gates & Fresh Adversarial Review",
+        detail: verdict.summary,
+      });
       return { approved: true, decomposed: false };
     }
 
+    const findingText =
+      verdict?.blockingIssues.join("; ") || "Reviewer raised blocking findings or check.py failed.";
     if (round === MAX_REVIEW_ROUNDS) {
-      const reasons =
-        verdict?.blockingIssues.join("; ") || "Reviewer did not approve or check.py failed.";
+      dashboard.recordChallenge(ticket.id, {
+        source: "reviewer",
+        finding: findingText,
+        outcome: "escalated",
+      });
       escalateTicketToHuman(
         ticket.id,
-        `Stopped at max review rounds (${MAX_REVIEW_ROUNDS}). Blocking findings: ${reasons}. Branch \`${ticket.branch}\` preserved.`,
+        `Stopped at max review rounds (${MAX_REVIEW_ROUNDS}). Blocking findings: ${findingText}`,
+        dashboard,
       );
       return { approved: false, decomposed: false };
     }
+
+    dashboard.recordChallenge(ticket.id, {
+      source: "reviewer",
+      finding: findingText,
+      outcome: "fixed",
+    });
+    dashboard.addEvent({
+      sliceId: ticket.id,
+      level: "challenge",
+      headline: `Adversarial Reviewer challenged diff (round ${round})`,
+      detail: findingText,
+    });
+    dashboard.upsertSlice(ticket.id, {
+      stage: "remediating",
+      pmSummary: `Adversarial Reviewer caught blocking findings — Builder addressing feedback...`,
+    });
 
     const feedback = verdict?.blockingIssues.join("\n- ") || postReviewCheck.stdout;
     await impl.resume?.(
@@ -350,95 +463,120 @@ async function processTicket(ticket: PlannedTicket): Promise<{ approved: boolean
 async function main(): Promise<void> {
   preflightChecks();
 
-  for (let cycle = 1; cycle <= MAX_OUTER_CYCLES; cycle++) {
-    console.log(`\n=== Sandcastle Outer Cycle ${cycle}/${MAX_OUTER_CYCLES} ===`);
+  const dashboard = new PMDashboard({
+    mode: "factory",
+    dockerImage: IMAGE_NAME,
+    maxCycles: MAX_OUTER_CYCLES,
+  });
+  const dashUrl = await dashboard.start();
+  console.log(`\nPM Mission Control Dashboard LIVE at: ${dashUrl}\n`);
 
-    const planRun = await sandcastle.run({
-      sandbox: makeDocker(),
-      name: "Planner",
-      agent: sandcastle.codex(MODEL, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
-      promptFile: "./.sandcastle/plan-prompt.md",
-      output: Output.object({
-        tag: "plan",
-        schema: PlanSchema,
-        maxRetries: 2,
-      }),
-    });
+  try {
+    for (let cycle = 1; cycle <= MAX_OUTER_CYCLES; cycle++) {
+      dashboard.setCycle(cycle, `Cycle ${cycle}/${MAX_OUTER_CYCLES}: Planner analyzing unblocked slices...`);
 
-    const { tickets } = planRun.output;
-    if (tickets.length === 0) {
-      console.log("No unblocked `ready-for-agent` tickets remaining. Factory complete.");
-      break;
-    }
+      const planRun = await sandcastle.run({
+        sandbox: makeDocker(),
+        name: "Planner",
+        agent: sandcastle.codex(MODEL, {
+          effort: "medium",
+          approvalsReviewer: "auto_review",
+          captureSessions: true,
+        }),
+        promptFile: "./.sandcastle/plan-prompt.md",
+        output: Output.object({
+          tag: "plan",
+          schema: PlanSchema,
+          maxRetries: 2,
+        }),
+      });
 
-    console.log(`Planned ${tickets.length} unblocked ticket(s):`);
-    for (const t of tickets) {
-      console.log(`  - ${t.id} (depth=${t.splitDepth}): ${t.title} -> ${t.branch}`);
-    }
-
-    let active = 0;
-    const queue: (() => void)[] = [];
-    const acquire = async () =>
-      active < MAX_PARALLEL
-        ? (active++, Promise.resolve())
-        : new Promise<void>((resolve) => queue.push(resolve));
-    const release = () => {
-      active--;
-      const next = queue.shift();
-      if (next) {
-        active++;
-        next();
+      const { tickets } = planRun.output;
+      if (tickets.length === 0) {
+        dashboard.setRunStatus("complete", "All planned slices complete — no ready-for-agent work remaining.");
+        break;
       }
-    };
 
-    const outcomes = await Promise.allSettled(
-      tickets.map(async (ticket) => {
-        await acquire();
-        try {
-          return await processTicket(ticket);
-        } finally {
-          release();
+      for (const t of tickets) {
+        dashboard.upsertSlice(t.id, {
+          title: t.title,
+          branch: t.branch,
+          splitDepth: t.splitDepth,
+          stage: "queued",
+          pmSummary: "Scheduled by Planner — waiting for worker container slot.",
+        });
+      }
+      dashboard.setCycle(cycle, `Running ${tickets.length} unblocked slice(s) in isolated Docker containers...`);
+
+      let active = 0;
+      const queue: (() => void)[] = [];
+      const acquire = async () =>
+        active < MAX_PARALLEL
+          ? (active++, Promise.resolve())
+          : new Promise<void>((resolve) => queue.push(resolve));
+      const release = () => {
+        active--;
+        const next = queue.shift();
+        if (next) {
+          active++;
+          next();
         }
-      }),
-    );
+      };
 
-    const readyToMerge = tickets.filter((t, idx) => {
-      const outcome = outcomes[idx];
-      return outcome?.status === "fulfilled" && outcome.value.approved && isAheadOfHead(t.branch);
-    });
-    const anyDecomposed = outcomes.some(
-      (o) => o.status === "fulfilled" && o.value.decomposed,
-    );
+      const outcomes = await Promise.allSettled(
+        tickets.map(async (ticket) => {
+          await acquire();
+          try {
+            return await processTicket(ticket, dashboard);
+          } finally {
+            release();
+          }
+        }),
+      );
 
-    if (readyToMerge.length === 0) {
-      if (anyDecomposed) {
-        console.log("Drifted ticket(s) auto-split into smaller sub-tickets. Continuing to next cycle.");
-        continue;
+      const readyToMerge = tickets.filter((t, idx) => {
+        const outcome = outcomes[idx];
+        return outcome?.status === "fulfilled" && outcome.value.approved && isAheadOfHead(t.branch);
+      });
+      const anyDecomposed = outcomes.some(
+        (o) => o.status === "fulfilled" && o.value.decomposed,
+      );
+
+      if (readyToMerge.length === 0) {
+        if (anyDecomposed) {
+          continue;
+        }
+        dashboard.setRunStatus("blocked", "Cycle stopped — remaining slices escalated for human review.");
+        break;
       }
-      console.log("No approved branches ready to merge this cycle. Stopping cleanly.");
-      break;
-    }
 
-    await sandcastle.run({
-      sandbox: makeDocker(),
-      name: "Merger",
-      branchStrategy: { type: "head" },
-      maxIterations: 4,
-      agent: sandcastle.codex(MODEL, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
-      promptFile: "./.sandcastle/merge-prompt.md",
-      promptArgs: {
-        BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
-        TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
-      },
-    });
+      dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
+      await sandcastle.run({
+        sandbox: makeDocker(),
+        name: "Merger",
+        branchStrategy: { type: "head" },
+        maxIterations: 4,
+        agent: sandcastle.codex(MODEL, {
+          effort: "medium",
+          approvalsReviewer: "auto_review",
+          captureSessions: true,
+        }),
+        promptFile: "./.sandcastle/merge-prompt.md",
+        promptArgs: {
+          BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
+          TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
+        },
+      });
+
+      for (const merged of readyToMerge) {
+        dashboard.upsertSlice(merged.id, {
+          stage: "merged",
+          pmSummary: "Merged into main and marked resolved.",
+        });
+      }
+    }
+  } finally {
+    await dashboard.close();
   }
 }
 

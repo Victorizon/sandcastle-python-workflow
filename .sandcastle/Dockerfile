@@ -34,6 +34,12 @@ RUN python3 -m venv /opt/venv \
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/home/agent/workspace/src"
 
+# Ensure both login shells (`bash -lc`) and non-login shells find /opt/venv tools
+RUN for bin in python python3 pip ruff pyright pytest lint-imports; do \
+      ln -sf "/opt/venv/bin/$bin" "/usr/local/bin/$bin"; \
+    done \
+  && echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/opt-venv.sh
+
 # Build-args for UID/GID alignment (sandcastle docker build-image auto-passes host UID/GID on WSL2/Linux)
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
@@ -44,6 +50,9 @@ RUN groupmod -o -g $AGENT_GID node \
 
 USER ${AGENT_UID}:${AGENT_GID}
 WORKDIR /home/agent
+
+# Prevent git "dubious ownership" errors on Windows/WSL2 bind-mounted worktrees
+RUN git config --global --add safe.directory '*'
 
 # Sandcastle bind-mounts the git worktree at /home/agent/workspace
 ENTRYPOINT ["sleep", "infinity"]

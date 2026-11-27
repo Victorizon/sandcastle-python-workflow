@@ -89,7 +89,7 @@ def _analyze_test_source(source: str) -> dict[str, TestFunctionStats]:
 
 def _git_ref_exists(root: Path, ref: str) -> bool:
     proc = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", ref],
+        ["git", "-c", "safe.directory=*", "rev-parse", "--verify", "--quiet", ref],
         cwd=root,
         capture_output=True,
         text=True,
@@ -100,7 +100,7 @@ def _git_ref_exists(root: Path, ref: str) -> bool:
 
 def _git_list_files(root: Path, ref: str, prefix: str) -> list[str]:
     proc = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", ref, prefix],
+        ["git", "-c", "safe.directory=*", "ls-tree", "-r", "--name-only", ref, prefix],
         cwd=root,
         capture_output=True,
         text=True,
@@ -113,7 +113,7 @@ def _git_list_files(root: Path, ref: str, prefix: str) -> list[str]:
 
 def _git_show_file(root: Path, ref: str, rel_path: str) -> str | None:
     proc = subprocess.run(
-        ["git", "show", f"{ref}:{rel_path}"],
+        ["git", "-c", "safe.directory=*", "show", f"{ref}:{rel_path}"],
         cwd=root,
         capture_output=True,
         text=True,

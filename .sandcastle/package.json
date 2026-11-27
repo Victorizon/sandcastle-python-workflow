@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "factory": "tsx run.ts",
+    "e2e": "tsx e2e-synthetic.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test drift-watchdog.test.ts"
+    "test": "tsx --test drift-watchdog.test.ts dashboard.test.ts"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.14.1",

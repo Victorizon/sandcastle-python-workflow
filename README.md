@@ -36,4 +36,9 @@ pytest tests_tooling
 
 # 3. Verify all workflow layers
 python scripts/verify_workflow_ready.py
+
+# 4. Run the real-Docker synthetic E2E test with live PM Mission Control Dashboard (http://127.0.0.1:4311)
+docker build -f .sandcastle/Dockerfile -t sandcastle:python-codex .
+npm --prefix .sandcastle ci
+DASHBOARD_KEEP_OPEN_SEC=60 npm --prefix .sandcastle run e2e
 ```
