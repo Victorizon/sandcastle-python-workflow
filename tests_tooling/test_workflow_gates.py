@@ -601,3 +601,34 @@ def test_local_tracker_split_repoints_downstream_blockers_and_detects_cycles(
     )
     assert cycle_res.returncode == 1
     assert "Circular ticket dependency detected" in cycle_res.stderr
+
+
+def test_local_tracker_parses_numeric_feature_slug_and_cross_feature_blockers(
+    tmp_path: Path,
+) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    tracker = str(repo / "scripts" / "local_tracker.py")
+    q4_dir = repo / ".scratch" / "2026-q4-rollout" / "issues"
+    q4_dir.mkdir(parents=True)
+    (q4_dir / "01-foundation.md").write_text(
+        "# 01: Foundation\n\n**Blocked by:** None\n\n**Status:** ready-for-agent\n",
+        encoding="utf-8",
+    )
+    (q4_dir / "02-dependent.md").write_text(
+        "# 02: Dependent\n\n"
+        "**Blocked by:** 2026-q4-rollout/01, workflow-smoke-test/01\n\n"
+        "**Status:** ready-for-agent\n",
+        encoding="utf-8",
+    )
+
+    listed = subprocess.run(
+        [sys.executable, tracker, "--root", str(repo), "list", "--json"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    by_id = {item["id"]: item for item in json.loads(listed.stdout)}
+    assert by_id["2026-q4-rollout/02"]["open_blockers"] == [
+        "2026-q4-rollout/01",
+        "workflow-smoke-test/01",
+    ]

@@ -66,33 +66,45 @@ export function acquireRunLock(
   mkdirSync(logsDir, { recursive: true });
   const lockPath = path.join(logsDir, lockName);
 
-  if (existsSync(lockPath)) {
+  const payload =
+    JSON.stringify({ pid: process.pid, label, startedAt: new Date().toISOString() }, null, 2) + "\n";
+
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const existing = JSON.parse(readFileSync(lockPath, "utf8")) as {
-        pid?: number;
-        label?: string;
-        startedAt?: string;
-      };
-      if (typeof existing.pid === "number" && isPidAlive(existing.pid)) {
-        throw new Error(
-          `Another Sandcastle ${existing.label ?? "run"} is already active (PID ${existing.pid}, started ${existing.startedAt ?? "unknown"}). ` +
-            `Wait for it to finish or stop it before starting a second run.`,
-        );
-      }
+      writeFileSync(lockPath, payload, { encoding: "utf8", flag: "wx" });
+      break;
     } catch (err) {
-      if (err instanceof Error && err.message.startsWith("Another Sandcastle")) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
         throw err;
       }
-      // Malformed/stale lockfile — safe to overwrite
+      try {
+        const existing = JSON.parse(readFileSync(lockPath, "utf8")) as {
+          pid?: number;
+          label?: string;
+          startedAt?: string;
+        };
+        if (typeof existing.pid === "number" && isPidAlive(existing.pid)) {
+          throw new Error(
+            `Another Sandcastle ${existing.label ?? "run"} is already active (PID ${existing.pid}, started ${existing.startedAt ?? "unknown"}). ` +
+              `Wait for it to finish or stop it before starting a second run.`,
+          );
+        }
+      } catch (readErr) {
+        if (readErr instanceof Error && readErr.message.startsWith("Another Sandcastle")) {
+          throw readErr;
+        }
+        // Malformed/stale lockfile — safe to remove and retry atomically
+      }
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // Another process may have already removed the stale lock
+      }
+      if (attempt === 1) {
+        throw new Error(`Could not acquire Sandcastle lockfile ${lockPath} due to concurrent startup.`);
+      }
     }
-    unlinkSync(lockPath);
   }
-
-  writeFileSync(
-    lockPath,
-    JSON.stringify({ pid: process.pid, label, startedAt: new Date().toISOString() }, null, 2) + "\n",
-    "utf8",
-  );
 
   let released = false;
   return () => {

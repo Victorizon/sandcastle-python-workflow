@@ -15,6 +15,7 @@ import {
   writeGoalReceipt,
 } from "./goal-core.js";
 import {
+  parseCliArgs as parseNightlyArchCliArgs,
   rankChurnHotspots,
   renderNightlyArchReport,
   writeProposalsAsNeedsTriageTickets,
@@ -305,4 +306,14 @@ test("agent-factory defaults to codex, honors SANDCASTLE_AGENT env var, and swit
     if (prev === undefined) delete process.env["SANDCASTLE_AGENT"];
     else process.env["SANDCASTLE_AGENT"] = prev;
   }
+});
+
+test("nightly-arch CLI parser ignores NaN numeric flags instead of disabling caps", () => {
+  const safe = parseNightlyArchCliArgs(["--max", "not-a-number", "--max-minutes", "abc"]);
+  assert.equal(safe.maxProposals, 2);
+  assert.equal(safe.maxMinutes, 240);
+
+  const clamped = parseNightlyArchCliArgs(["--max", "99", "--max-minutes", "999"]);
+  assert.equal(clamped.maxProposals, 3);
+  assert.equal(clamped.maxMinutes, 280);
 });

@@ -106,6 +106,18 @@ def test_high_risk_order_with_payment_only_and_unmatched_address_is_rejected() -
     assert result.auto_execute is False
 
 
+def test_non_allowlisted_low_risk_unverified_order_fails_closed_not_rejected() -> None:
+    client = FakeExternalClient.from_fixture_file(
+        FIXTURES / "non_allowlisted_low_risk_unverified_fail_closed.json"
+    )
+
+    result = triage_order("ord-low-unverif-008", client)
+
+    assert result.decision is Decision.MANUAL_REVIEW
+    assert result.auto_execute is False
+    assert result.reason == "fail_closed_ambiguous_signals"
+
+
 @dataclass(frozen=True)
 class FuzzedOrderCase:
     allowlisted: bool

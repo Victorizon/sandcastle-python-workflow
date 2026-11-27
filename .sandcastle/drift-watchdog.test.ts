@@ -4,6 +4,7 @@ import {
   DriftDetectedError,
   DriftWatchdog,
   parseGitNumstat,
+  parsePositiveEnvNumber,
 } from "./drift-watchdog.js";
 
 test("aborts when wall-clock timer expires", async () => {
@@ -144,4 +145,15 @@ test("aborts on 2-step ping-pong oscillation thrash loop (edit -> pytest -> edit
   } finally {
     wd.dispose();
   }
+});
+
+test("parsePositiveEnvNumber falls back safely on blank, NaN, or non-positive values", () => {
+  assert.equal(parsePositiveEnvNumber(undefined, 400), 400);
+  assert.equal(parsePositiveEnvNumber("", 400), 400);
+  assert.equal(parsePositiveEnvNumber("   ", 400), 400);
+  assert.equal(parsePositiveEnvNumber("abc", 400), 400);
+  assert.equal(parsePositiveEnvNumber("-10", 400), 400);
+  assert.equal(parsePositiveEnvNumber("0", 400), 400);
+  assert.equal(parsePositiveEnvNumber("0", 130_000, true), 0);
+  assert.equal(parsePositiveEnvNumber("250", 400), 250);
 });
