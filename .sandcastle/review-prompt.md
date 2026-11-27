@@ -41,6 +41,8 @@ Perform a fresh-context two-axis adversarial code review of branch `{{BRANCH}}` 
 
 # EXECUTION
 
+Write `summary` and `blockingIssues` in **plain English for a Product Manager** (concrete behavior and impact, zero unexplained jargon or vague hand-waving).
+
 Output a JSON verdict inside `<verdict>` tags matching:
 
 <verdict>

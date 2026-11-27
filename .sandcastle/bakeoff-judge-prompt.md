@@ -25,6 +25,7 @@ Compare all variants strictly on:
 4. **Standards Compliance:** Any fail-closed gaps, Fowler smells, or boundary leaks?
 
 Be opinionated — pick a clear winner (or propose a crisp hybrid combining the best parts of two variants).
+Write `verdict`, `strengths`, `weaknesses`, `hybridRecommendation`, and `mergeAction` in **plain English for a Product Manager** (concrete trade-offs and business impact, zero unexplained jargon).
 
 # OUTPUT
 

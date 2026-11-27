@@ -7,6 +7,7 @@ You are analyzing verified historical Sandcastle factory runs (minimum 10 comple
 2. NEVER propose weakening `scripts/test_guard.py`, `scripts/coverage-baseline.json`, or `scripts/mutation_check.py`.
 3. Every proposed numeric value MUST stay inside the safety clamps below.
 4. Prefer tightening noisy thresholds over loosening guardrails unless data proves repeated false positives on otherwise-clean slices.
+5. Write `executiveSummary`, `suggestion`, and `evidence` in **plain English for a Product Manager** (clear cause-and-effect, zero unexplained jargon).
 
 # AGGREGATED RUN STATS
 

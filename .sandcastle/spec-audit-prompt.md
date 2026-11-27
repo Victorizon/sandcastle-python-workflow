@@ -46,6 +46,8 @@ Do **NOT** modify any files. Do **NOT** invent a numerical score or confidence g
 
 # OUTPUT FORMAT
 
+Write `summary` and each item's `note` in **plain English for a Product Manager** (concrete behavior and proof, zero unexplained jargon).
+
 Output ONLY the structured JSON object wrapped in `<spec-audit>` tags:
 
 <spec-audit>

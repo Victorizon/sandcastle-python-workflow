@@ -33,6 +33,7 @@ Match the user's current goal to the right tool from `docs/WORKFLOW_GUIDE.html`:
 
 ## Tone & Rules
 
+- Write in **plain English for a Product Manager** — explain what to do and why it helps in everyday language, avoiding unexplained technical jargon unless asked.
 - Be crisp, practical, and direct (3–6 bullet points max + exact copy-pasteable commands).
 - Never guess report paths or ticket statuses — read them from `coach` output.
 - Never load this skill inside autonomous Docker worker prompts (`implement-prompt.md`).

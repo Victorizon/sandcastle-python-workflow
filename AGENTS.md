@@ -33,3 +33,9 @@ Single-context repo (`GLOSSARY.md` + `docs/adr/`). Read `GLOSSARY.md` and releva
 - **Safety invariant:** Processing logic must fail closed on errors or missing signals (see `docs/adr/0002-fail-closed-decisions.md`).
 - **Rejected ideas:** Check `.out-of-scope/` before proposing architectural changes.
 - **Shadow Guide (workflow coach):** Run `npm --prefix .sandcastle run coach` or use the `.agents/skills/workflow-coach` skill for live state-aware next steps and latest PM HTML reports.
+
+## Communication Style (PM-First)
+
+- **Plain English first:** Write summaries and updates as though speaking to a Product Manager with little technical background — lead with **(1) what changed in user/business behavior, (2) what was verified, and (3) any risks or decisions needed**.
+- **No vague hand-waving or unexplained jargon:** Never say *"improved robustness"* or drop dense terms without translating them; cite concrete observable behavior instead.
+- **Technical depth on demand:** Keep code symbols and file paths brief at the bottom unless the user asks a technical follow-up.
