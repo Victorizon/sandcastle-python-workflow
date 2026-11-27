@@ -32,6 +32,7 @@
    - Confirmed `AUTO_APPROVE` case (corroborated positive signals)
    - Missing or incomplete signals → `MANUAL_REVIEW`
    - Upstream `ExternalClientError` → `MANUAL_REVIEW`
+   - At least one **Hypothesis (`@given`) property-based fuzz test** for every parser or decision rule proving random/malformed inputs never crash unhandled and never trigger `auto_execute=True` improperly.
 5. **Never delete or weaken tests to satisfy checks:** Enforced mechanically by:
    - `scripts/test_guard.py` (blocks deleting/renaming existing `def test_*`, reducing assertion counts, `skip`/`xfail`/`assert True`, or modifying existing `tests/fixtures/*.json`)
    - `scripts/coverage-baseline.json` (monotonic line coverage floor over `src/`)

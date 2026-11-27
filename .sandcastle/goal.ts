@@ -25,6 +25,7 @@ import {
   parseGoalCliArgs,
   writeGoalReceipt,
 } from "./goal-core.js";
+import { writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -206,7 +207,34 @@ async function main(): Promise<void> {
     lastEvaluation: lastEval,
   };
   const receiptPath = writeGoalReceipt(receipt);
-  console.log(`\n=== GOAL MET ===\nReceipt saved: ${receiptPath}`);
+  const htmlPath = writePmHtmlReport({
+    kind: "goal",
+    slug: contract.slug,
+    title: `Goal Achieved: ${contract.name}`,
+    status: "success",
+    statusLabel: "GOAL MET",
+    executiveSummary: receipt.reason,
+    metrics: [
+      { label: "Elapsed Time", value: `${receipt.elapsedMinutes}m` },
+      { label: "Factory Cycles", value: String(receipt.cyclesRun) },
+      { label: "Gap-Plan Rounds", value: String(receipt.gapPlanRoundsUsed) },
+      { label: "HEAD Commit", value: receipt.headCommit },
+    ],
+    sections: [
+      {
+        heading: "Verified Goal Checks",
+        table: {
+          headers: ["Command", "Status", "Exit Code"],
+          rows: receipt.lastEvaluation.commandResults.map((r) => [
+            r.command,
+            r.passed ? "PASS" : "FAIL",
+            String(r.exitCode),
+          ]),
+        },
+      },
+    ],
+  });
+  console.log(`\n=== GOAL MET ===\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {

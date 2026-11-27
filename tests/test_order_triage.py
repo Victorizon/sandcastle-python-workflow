@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from app.adapters.external_client import Decision
 from app.processors.order_triage import triage_order
@@ -100,3 +104,61 @@ def test_high_risk_order_with_payment_only_and_unmatched_address_is_rejected() -
 
     assert result.decision is Decision.REJECT
     assert result.auto_execute is False
+
+
+@dataclass(frozen=True)
+class FuzzedOrderCase:
+    allowlisted: bool
+    payment_verified: bool
+    address_matched: bool
+    risk_tier: str
+    channel: str
+    region: str
+
+
+@given(
+    case=st.builds(
+        FuzzedOrderCase,
+        allowlisted=st.booleans(),
+        payment_verified=st.booleans(),
+        address_matched=st.booleans(),
+        risk_tier=st.text(max_size=30),
+        channel=st.text(max_size=20),
+        region=st.text(max_size=10),
+    )
+)
+def test_property_never_auto_executes_without_all_positive_invariants(
+    case: FuzzedOrderCase,
+) -> None:
+    partner = "partner-trusted-01"
+    client = FakeExternalClient(
+        {
+            "order": {
+                "order_id": "ord-prop-001",
+                "partner_id": partner,
+                "customer_email": "fuzz.demo@example.test",
+                "channel": case.channel,
+                "region": case.region,
+            },
+            "allowlisted_partners": [partner] if case.allowlisted else [],
+            "signals": [
+                {
+                    "channel": case.channel,
+                    "region": case.region,
+                    "payment_verified": case.payment_verified,
+                    "address_matched": case.address_matched,
+                    "risk_tier": case.risk_tier,
+                }
+            ],
+        }
+    )
+
+    result = triage_order("ord-prop-001", client)
+
+    assert isinstance(result.decision, Decision)
+    if result.auto_execute:
+        assert case.allowlisted is True
+        assert case.payment_verified is True
+        assert case.address_matched is True
+        assert case.risk_tier == "low"
+        assert result.decision is Decision.AUTO_APPROVE

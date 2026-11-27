@@ -20,6 +20,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
 import { parseCheckMetrics } from "./dashboard.js";
 import { parseGitNumstat } from "./drift-watchdog.js";
+import { writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -302,7 +303,41 @@ async function main(): Promise<void> {
   const dateTag = new Date().toISOString().slice(0, 10);
   const reportPath = path.join(logsDir, `bakeoff-${slug}-${dateTag}.md`);
   writeFileSync(reportPath, renderBakeoffReport(slug, brief, scorecards, judgeRun.output), "utf8");
-  console.log(`\n=== Bake-Off Winner: Variant ${judgeRun.output.winner} ===\nReport saved: ${reportPath}`);
+  const htmlPath = writePmHtmlReport({
+    kind: "bakeoff",
+    slug,
+    title: `Design-It-Twice Bake-Off: ${slug}`,
+    status: "proposal",
+    statusLabel: `Winner: Variant ${judgeRun.output.winner}`,
+    executiveSummary: `${brief} — Adversarial Judge selected Variant ${judgeRun.output.winner}. ${judgeRun.output.hybridRecommendation}`,
+    metrics: [
+      { label: "Winning Variant", value: `Variant ${judgeRun.output.winner}` },
+      { label: "Variants Tested", value: String(scorecards.length) },
+      { label: "Passing 6-Gate", value: String(scorecards.filter((s) => s.checkPassed).length) },
+    ],
+    sections: [
+      {
+        heading: "Deterministic 6-Gate Comparison",
+        table: {
+          headers: ["Variant", "Approach", "6-Gate", "Diff Lines", "Coverage", "Mutation", "Score"],
+          rows: scorecards.map((s) => [
+            s.variant,
+            s.name,
+            s.checkPassed ? "PASS" : "FAIL",
+            String(s.diffLines),
+            s.coveragePercent !== null ? `${s.coveragePercent}%` : "--",
+            s.mutationScore !== null ? `${s.mutationScore}%` : "--",
+            String(s.deterministicRankScore),
+          ]),
+        },
+      },
+      {
+        heading: "Next Step",
+        paragraphs: [judgeRun.output.mergeAction],
+      },
+    ],
+  });
+  console.log(`\n=== Bake-Off Winner: Variant ${judgeRun.output.winner} ===\nReport: ${reportPath}\nPM HTML: ${htmlPath}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {

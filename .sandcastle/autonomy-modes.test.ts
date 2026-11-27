@@ -18,6 +18,11 @@ import {
   renderNightlyArchReport,
   writeProposalsAsNeedsTriageTickets,
 } from "./nightly-arch.js";
+import {
+  buildJiraMarkup,
+  renderPmHtmlReport,
+  writePmHtmlReport,
+} from "./pm-report.js";
 
 test("goal-core supports configurable wall-clock cap including 0 (unlimited) and stall breakers", () => {
   const tmp = mkdtempSync(path.join(os.tmpdir(), "sandcastle-goal-"));
@@ -197,4 +202,40 @@ test("bakeoff deterministic scorer rewards passing gates, high mutation score, a
     },
   );
   assert.ok(md.includes("Adversarial Judge Winner:** **Variant A**"));
+});
+
+test("pm-report generates styled offline HTML with 1-click Jira markup", () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "sandcastle-pm-report-"));
+  try {
+    const input = {
+      kind: "goal" as const,
+      slug: "parser-upgrade",
+      title: "Goal Achieved: Signal Parser Upgrade",
+      status: "success" as const,
+      statusLabel: "GOAL MET",
+      executiveSummary: "All 4 slices passed 6 gates and Hypothesis property fuzzing.",
+      metrics: [
+        { label: "Slices", value: "4 / 4" },
+        { label: "Mutation Kill", value: "93.3%" },
+      ],
+      sections: [
+        {
+          heading: "Deliverables",
+          bullets: ["Extracted clean signal parser", "Added 50-case Hypothesis fuzzing"],
+        },
+      ],
+    };
+    const jira = buildJiraMarkup(input);
+    assert.ok(jira.includes("h2. Goal Achieved: Signal Parser Upgrade"));
+    assert.ok(jira.includes("{panel:title=Executive Summary (GOAL MET)"));
+
+    const html = renderPmHtmlReport(input);
+    assert.ok(html.includes("Copy Jira Markup"));
+    assert.ok(html.includes("Print / PDF"));
+
+    const saved = writePmHtmlReport(input, tmp);
+    assert.ok(readFileSync(saved, "utf8").includes("Signal Parser Upgrade"));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });

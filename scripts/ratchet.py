@@ -116,7 +116,7 @@ def _collect_ruff() -> list[Violation]:
 def _collect_pyright() -> list[Violation]:
     pyright_bin = _resolve_tool("pyright")
     proc = subprocess.run(
-        [pyright_bin, "--outputjson"],
+        [pyright_bin, "--pythonpath", sys.executable, "--outputjson"],
         cwd=ROOT,
         capture_output=True,
         text=True,

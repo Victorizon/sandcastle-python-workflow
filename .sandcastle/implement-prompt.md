@@ -27,6 +27,7 @@ Only work on this single ticket. Do not touch unrelated files or close the ticke
    - RED: add a public-seam behavioral test + anonymized JSON replay fixture under `tests/fixtures/`
    - GREEN: write minimal implementation under `src/` to pass the test
    - Do NOT mock internal helpers; only use `FakeExternalClient` at the system boundary
+   - For parser or decision-rule changes, include a Hypothesis `@given(...)` invariant test proving malformed inputs fail closed and never crash unhandled
    - NEVER delete, rename, or weaken existing tests or existing fixture JSONs
 3. Keep fail-closed invariants intact: return `Decision.MANUAL_REVIEW` (`auto_execute=False`) on errors, missing signals, or unknown states.
 4. Run `python scripts/check.py` before committing. Fix every failure cleanly without adding `# noqa` or `# type: ignore`.

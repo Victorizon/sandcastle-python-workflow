@@ -15,6 +15,7 @@ import {
   parseCheckMetrics,
   summarizeAgentEventForPm,
 } from "./dashboard.js";
+import { writePmHtmlReport } from "./pm-report.js";
 import { recordFactoryRun } from "./run-history.js";
 import {
   DriftDetectedError,
@@ -577,7 +578,60 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    recordFactoryRun(dashboard.getState());
+    const finalState = dashboard.getState();
+    recordFactoryRun(finalState);
+    const htmlPath = writePmHtmlReport({
+      kind: "factory",
+      slug: "session",
+      title: "Sandcastle Factory Run Summary",
+      status: finalState.runStatus === "complete" ? "success" : "attention",
+      statusLabel: finalState.runStatus === "complete" ? "Complete" : "Needs Review",
+      executiveSummary: finalState.headline,
+      metrics: [
+        {
+          label: "Slices Shipped",
+          value: `${finalState.metrics.completedSlices} / ${finalState.metrics.totalSlices}`,
+          note: `${finalState.metrics.progressPercent}% complete`,
+        },
+        {
+          label: "Adversarial Challenges",
+          value: String(finalState.metrics.adversarialChallengesRaised),
+          note: `${finalState.metrics.adversarialChallengesResolved} fixed before merge`,
+        },
+        {
+          label: "Drift Auto-Splits",
+          value: String(finalState.metrics.driftAutoSplits),
+          note: `${finalState.metrics.testTamperBlocks} tamper blocks`,
+        },
+        {
+          label: "Test Strength",
+          value:
+            finalState.metrics.latestMutationScore !== null
+              ? `${finalState.metrics.latestMutationScore}%`
+              : "--",
+          note:
+            finalState.metrics.latestCoveragePercent !== null
+              ? `Coverage ${finalState.metrics.latestCoveragePercent}%`
+              : "Coverage --",
+        },
+      ],
+      sections: [
+        {
+          heading: "Slice Outcomes",
+          table: {
+            headers: ["Slice", "Title", "Stage", "Diff Lines", "Summary"],
+            rows: finalState.slices.map((s) => [
+              s.id,
+              s.title,
+              s.stage,
+              String(s.watchdog.diffLines),
+              s.pmSummary,
+            ]),
+          },
+        },
+      ],
+    });
+    console.log(`PM HTML report saved to: ${htmlPath}`);
     await dashboard.close();
   }
 }

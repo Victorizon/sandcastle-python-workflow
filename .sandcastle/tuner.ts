@@ -18,6 +18,7 @@ import {
   MIN_RUNS_FOR_TUNING,
   loadVerifiedRunHistory,
 } from "./run-history.js";
+import { writePmHtmlReport } from "./pm-report.js";
 
 export type TunableParam =
   | "DRIFT_MAX_MINUTES"
@@ -274,7 +275,34 @@ async function main(): Promise<void> {
   const dateTag = new Date().toISOString().slice(0, 10);
   const reportPath = path.join(logsDir, `tuning-report-${dateTag}.md`);
   writeFileSync(reportPath, renderTuningReportMarkdown(stats, proposal, clampedNotes), "utf8");
-  console.log(`Tuning proposal written to: ${reportPath}`);
+  const htmlPath = writePmHtmlReport({
+    kind: "tuning",
+    slug: "parameters",
+    title: `Sandcastle Parameter Tuning Report (${dateTag})`,
+    status: "proposal",
+    statusLabel: `${stats.verifiedRunCount} Runs Analyzed`,
+    executiveSummary:
+      proposal?.executiveSummary ??
+      `Aggregated deterministic p50/p90 metrics across ${stats.verifiedRunCount} verified local factory runs.`,
+    metrics: [
+      { label: "Verified Runs", value: String(stats.verifiedRunCount) },
+      { label: "p90 Elapsed", value: `${stats.p90ElapsedMin}m` },
+      { label: "p90 Diff Lines", value: String(stats.p90DiffLines) },
+      { label: "Drift Splits", value: String(stats.driftAutoSplits) },
+    ],
+    sections: [
+      {
+        heading: "Proposed Clamped Parameter Changes",
+        bullets:
+          proposal && proposal.parameterChanges.length > 0
+            ? proposal.parameterChanges.map(
+                (c) => `${c.param}: ${c.currentValue} -> ${c.proposedValue} (${c.evidence})`,
+              )
+            : ["No parameter adjustments proposed."],
+      },
+    ],
+  });
+  console.log(`Tuning proposal written to: ${reportPath}\nPM HTML report: ${htmlPath}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {

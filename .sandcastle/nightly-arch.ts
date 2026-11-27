@@ -18,6 +18,7 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { writePmHtmlReport } from "./pm-report.js";
 
 const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -287,7 +288,33 @@ async function main(): Promise<void> {
   mkdirSync(logsDir, { recursive: true });
   const reportPath = path.join(logsDir, `nightly-arch-${dateTag}.md`);
   writeFileSync(reportPath, renderNightlyArchReport(dateTag, hotspots, proposals, branchResults), "utf8");
-  console.log(`\nNightly architecture report saved to: ${reportPath}`);
+  const htmlPath = writePmHtmlReport({
+    kind: "nightly-arch",
+    slug: "proposals",
+    title: `Overnight Architecture Proposals (${dateTag})`,
+    status: "proposal",
+    statusLabel: `${proposals.length} Proposal(s)`,
+    executiveSummary:
+      proposals.length > 0
+        ? `Scanned ${hotspots.length} recent high-churn files and identified ${proposals.length} high-leverage deepening opportunity(ies).`
+        : "Scanned recent high-churn files — no high-leverage architecture changes needed tonight.",
+    metrics: [
+      { label: "Hotspots Scanned", value: String(hotspots.length) },
+      { label: "Proposals Generated", value: String(proposals.length) },
+      { label: "Mode", value: mode },
+      { label: "Verified Drafts", value: String(branchResults.filter((b) => b.passed).length) },
+    ],
+    sections: [
+      {
+        heading: "Recommended Deepening Refactors",
+        table: {
+          headers: ["Title", "Strength", "Files", "Expected Benefit"],
+          rows: proposals.map((p) => [p.title, p.strength, p.files.join(", "), p.benefits]),
+        },
+      },
+    ],
+  });
+  console.log(`\nNightly architecture report saved to: ${reportPath}\nPM HTML report: ${htmlPath}`);
 }
 
 if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) {

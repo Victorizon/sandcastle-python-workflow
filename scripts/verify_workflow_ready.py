@@ -146,6 +146,7 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             ".sandcastle/dashboard.ts",
             ".sandcastle/dashboard-ui.ts",
             ".sandcastle/dashboard.test.ts",
+            ".sandcastle/pm-report.ts",
             ".sandcastle/run-history.ts",
             ".sandcastle/tuner.ts",
             ".sandcastle/tuner.test.ts",

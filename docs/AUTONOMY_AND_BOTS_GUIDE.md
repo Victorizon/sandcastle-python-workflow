@@ -126,3 +126,12 @@ npm --prefix .sandcastle run tune -- --stats-only
 
 - **Hard 10-run local-existence floor:** Refuses to run until at least 10 real factory run files exist and validate on disk.
 - **Proposal-only + hard safety clamps:** Writes `.sandcastle/logs/tuning-report-YYYY-MM-DD.md` and clamps all suggested values inside safe bounds — never auto-edits `.env` or test locks.
+
+---
+
+## 5. Automatic Styled PM HTML Reports & 1-Click Jira Copy
+
+Every `factory`, `goal`, `nightly-arch`, `bakeoff`, and `tune` run automatically generates a clean, offline-viewable, print-ready executive HTML report in **`.sandcastle/logs/reports/<kind>-<slug>-YYYY-MM-DD.html`** — using zero extra LLM tokens (100% grounded in verified run data):
+
+- **Double-click to open** in any browser to share with colleagues or save as PDF (`Print / PDF` button).
+- **1-Click `Copy Jira Markup` button** copies ready-to-paste Jira wiki syntax (`h2.`, `{panel}`, metrics, and tables) straight to your clipboard.

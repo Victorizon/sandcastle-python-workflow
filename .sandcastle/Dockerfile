@@ -29,6 +29,7 @@ RUN python3 -m venv /opt/venv \
        "pyright>=1.1.390" \
        "pytest>=8.3.0" \
        "pytest-cov>=6.0.0" \
+       "hypothesis>=6.120.0" \
        "import-linter>=2.1"
 
 ENV PATH="/opt/venv/bin:$PATH"
