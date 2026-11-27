@@ -25,7 +25,17 @@ jobs:
           .venv/bin/pip install -r requirements-dev.txt
           .venv/bin/pip install -e .
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Run full 6-gate verification + tooling self-tests
         run: |
           .venv/bin/python scripts/check.py
           .venv/bin/pytest tests_tooling
+
+      - name: Typecheck & test Sandcastle Drift Watchdog
+        run: |
+          npm --prefix .sandcastle ci
+          npm --prefix .sandcastle run typecheck
+          npm --prefix .sandcastle test

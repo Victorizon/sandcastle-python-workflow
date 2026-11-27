@@ -275,3 +275,92 @@ def test_branch_guard_allows_scratch_on_main_and_src_on_feature_branch(tmp_path:
         check=False,
     )
     assert on_branch.returncode == 0
+
+
+def test_local_tracker_auto_split_creates_subtickets_and_enforces_max_depth(
+    tmp_path: Path,
+) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    tracker = str(ROOT / "scripts" / "local_tracker.py")
+    plan_file = tmp_path / "split_plan.json"
+    plan_file.write_text(
+        json.dumps(
+            {
+                "reason": "wall_clock_timeout after 20m",
+                "subtickets": [
+                    {
+                        "title": "Add fixture for unknown risk_tier",
+                        "what_to_build": "Add replay fixture and failing test.",
+                        "acceptance_criteria": ["Fixture added"],
+                        "blocked_by_indexes": [],
+                    },
+                    {
+                        "title": "Reject unknown risk_tier in processor",
+                        "what_to_build": "Implement fail-closed check in triage_order.",
+                        "acceptance_criteria": ["check.py passes"],
+                        "blocked_by_indexes": [0],
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    split_res = subprocess.run(
+        [
+            sys.executable,
+            tracker,
+            "--root",
+            str(repo),
+            "split",
+            "workflow-smoke-test/01",
+            "--plan-json",
+            str(plan_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert split_res.returncode == 0
+    created = json.loads(split_res.stdout)["created"]
+    assert created == ["workflow-smoke-test/02", "workflow-smoke-test/03"]
+
+    listed = subprocess.run(
+        [
+            sys.executable,
+            tracker,
+            "--root",
+            str(repo),
+            "list",
+            "--status",
+            "ready-for-agent",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    ready = json.loads(listed.stdout)
+    assert [t["id"] for t in ready] == ["workflow-smoke-test/02", "workflow-smoke-test/03"]
+    assert ready[0]["open_blockers"] == []
+    assert ready[1]["open_blockers"] == ["workflow-smoke-test/02"]
+    assert ready[0]["split_depth"] == 1
+
+    # Hard cap: attempting to split a depth-1 child ticket again MUST fail
+    second_split = subprocess.run(
+        [
+            sys.executable,
+            tracker,
+            "--root",
+            str(repo),
+            "split",
+            "workflow-smoke-test/02",
+            "--plan-json",
+            str(plan_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert second_split.returncode == 1
+    assert "split_depth=1 >= max=1" in second_split.stderr

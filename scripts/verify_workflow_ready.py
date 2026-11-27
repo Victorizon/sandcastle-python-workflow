@@ -141,9 +141,12 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             ".sandcastle/package.json",
             ".sandcastle/tsconfig.json",
             ".sandcastle/run.ts",
+            ".sandcastle/drift-watchdog.ts",
+            ".sandcastle/drift-watchdog.test.ts",
             ".sandcastle/plan-prompt.md",
             ".sandcastle/implement-prompt.md",
             ".sandcastle/review-prompt.md",
+            ".sandcastle/decompose-prompt.md",
             ".sandcastle/merge-prompt.md",
         ]
     )

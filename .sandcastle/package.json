@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "factory": "tsx run.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test drift-watchdog.test.ts"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "^0.14.1",

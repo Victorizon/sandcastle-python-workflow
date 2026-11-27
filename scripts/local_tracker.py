@@ -1,7 +1,7 @@
 """Deterministic local markdown issue tracker over `.scratch/<feature>/issues/<NN>-<slug>.md`.
 
-Provides a visible task board and JSON interface matching `gh issue list` so both
-humans and Sandcastle's Planner/Implementer/Reviewer/Merger never lose track of work.
+Provides a visible task board, JSON interface matching `gh issue list`, and bounded
+1-shot ticket splitting (`split`) for Sandcastle's Drift Watchdog + Decomposer.
 """
 
 from __future__ import annotations
@@ -13,11 +13,13 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parent.parent
 
 STATUS_RE = re.compile(r"^\*\*Status:\*\*\s*(.+?)\s*$", re.MULTILINE)
 BLOCKED_RE = re.compile(r"^\*\*Blocked by:\*\*\s*(.+?)\s*$", re.MULTILINE)
+SPLIT_DEPTH_RE = re.compile(r"^\*\*Split depth:\*\*\s*(\d+)\s*$", re.MULTILINE)
 TITLE_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 TICKET_FILE_RE = re.compile(r"^(\d+)-(.+)\.md$")
 
@@ -30,6 +32,7 @@ class Ticket:
     title: str
     status: str
     blocked_by: list[str]
+    split_depth: int
     path: str
     spec_path: str | None
     body: str
@@ -48,6 +51,11 @@ def _parse_blockers(raw: str, feature: str) -> list[str]:
         if match:
             blockers.append(f"{feature}/{int(match.group(1)):02d}")
     return blockers
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return (slug[:48].rstrip("-")) or "subticket"
 
 
 def discover_tickets(root: Path = ROOT) -> list[Ticket]:
@@ -70,9 +78,11 @@ def discover_tickets(root: Path = ROOT) -> list[Ticket]:
             title_m = TITLE_RE.search(text)
             status_m = STATUS_RE.search(text)
             blocked_m = BLOCKED_RE.search(text)
+            depth_m = SPLIT_DEPTH_RE.search(text)
             title = title_m.group(1).strip() if title_m else md.stem
             status = status_m.group(1).strip() if status_m else "needs-triage"
             blockers = _parse_blockers(blocked_m.group(1), feature_dir.name) if blocked_m else []
+            split_depth = int(depth_m.group(1)) if depth_m else 0
             tickets.append(
                 Ticket(
                     id=f"{feature_dir.name}/{num:02d}",
@@ -81,6 +91,7 @@ def discover_tickets(root: Path = ROOT) -> list[Ticket]:
                     title=title,
                     status=status,
                     blocked_by=blockers,
+                    split_depth=split_depth,
                     path=md.relative_to(root).as_posix(),
                     spec_path=spec_rel,
                     body=text,
@@ -106,7 +117,7 @@ def _open_blockers(ticket: Ticket, by_id: dict[str, Ticket]) -> list[str]:
     return [
         b
         for b in ticket.blocked_by
-        if b not in by_id or by_id[b].status not in {"resolved", "wontfix"}
+        if b not in by_id or by_id[b].status not in {"resolved", "wontfix", "split"}
     ]
 
 
@@ -116,12 +127,12 @@ def cmd_board(root: Path = ROOT) -> int:
         print("No local tickets found under `.scratch/<feature>/issues/`.")
         return 0
     by_id = {t.id: t for t in tickets}
-    print(f"{'ID':<32} {'STATUS':<17} {'UNBLOCKED':<10} TITLE")
-    print("-" * 92)
+    print(f"{'ID':<32} {'STATUS':<17} {'DEPTH':<6} {'UNBLOCKED':<10} TITLE")
+    print("-" * 98)
     for t in tickets:
         blockers = _open_blockers(t, by_id)
         unblocked = "yes" if not blockers else f"no ({','.join(blockers)})"
-        print(f"{t.id:<32} {t.status:<17} {unblocked:<10} {t.title}")
+        print(f"{t.id:<32} {t.status:<17} {t.split_depth:<6} {unblocked:<10} {t.title}")
     return 0
 
 
@@ -140,7 +151,7 @@ def cmd_list(status_filter: str | None, as_json: bool, root: Path = ROOT) -> int
         print(json.dumps(payload, indent=2))
         return 0
     for t in filtered:
-        print(f"{t.id} [{t.status}] {t.title}")
+        print(f"{t.id} [{t.status}] (depth={t.split_depth}) {t.title}")
     return 0
 
 
@@ -198,8 +209,90 @@ def cmd_resolve(ticket_id: str, summary: str, root: Path = ROOT) -> int:
     return 0
 
 
+def _load_plan_payload(plan_json_arg: str) -> dict[str, Any]:
+    raw = sys.stdin.read() if plan_json_arg == "-" else Path(plan_json_arg).read_text("utf-8")
+    data: Any = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("Split plan JSON must be an object.")
+    return cast(dict[str, Any], data)
+
+
+def _extract_subtickets(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_items: Any = plan.get("subtickets")
+    if not isinstance(raw_items, list):
+        return []
+    raw_list = cast(list[Any], raw_items)
+    return [cast(dict[str, Any], item) for item in raw_list if isinstance(item, dict)]
+
+
+def cmd_split(ticket_id: str, plan_json_arg: str, max_depth: int, root: Path = ROOT) -> int:
+    parent = _find_ticket(ticket_id, root)
+    if parent.split_depth >= max_depth:
+        print(
+            f"Refused split for {parent.id}: split_depth={parent.split_depth} >= max={max_depth}. "
+            "Escalate to ready-for-human instead of splitting infinitely.",
+            file=sys.stderr,
+        )
+        return 1
+
+    plan = _load_plan_payload(plan_json_arg)
+    subtickets = _extract_subtickets(plan)
+    if len(subtickets) < 2:
+        print("Split plan must contain at least 2 subtickets.", file=sys.stderr)
+        return 1
+
+    feature_tickets = [t for t in discover_tickets(root) if t.feature == parent.feature]
+    next_num = max((t.number for t in feature_tickets), default=0) + 1
+    issues_dir = root / ".scratch" / parent.feature / "issues"
+    child_depth = parent.split_depth + 1
+
+    allocated_nums = [next_num + i for i in range(len(subtickets))]
+    created_ids: list[str] = []
+    for idx, sub in enumerate(subtickets):
+        num = allocated_nums[idx]
+        title = str(sub.get("title", "")).strip()
+        what = str(sub.get("what_to_build", "")).strip()
+        raw_criteria: Any = sub.get("acceptance_criteria", [])
+        criteria_list = cast(list[Any], raw_criteria) if isinstance(raw_criteria, list) else []
+        criteria = [str(c).strip() for c in criteria_list if str(c).strip()]
+        raw_deps: Any = sub.get("blocked_by_indexes", [])
+        deps_list = cast(list[Any], raw_deps) if isinstance(raw_deps, list) else []
+        dep_indexes = [int(i) for i in deps_list if 0 <= int(i) < idx]
+
+        blocker_nums = [int(b.split("/")[-1]) for b in parent.blocked_by]
+        blocker_nums.extend(allocated_nums[i] for i in dep_indexes)
+        blocked_str = (
+            ", ".join(f"{n:02d}" for n in sorted(set(blocker_nums)))
+            if blocker_nums
+            else "None (can start immediately)"
+        )
+        checklist = "\n".join(f"- [ ] {item}" for item in criteria) or "- [ ] Passes check.py"
+        md_body = (
+            f"# {num:02d}: {title}\n\n"
+            f"**What to build:** {what}\n\n"
+            f"**Parent ticket:** {parent.id}\n\n"
+            f"**Blocked by:** {blocked_str}\n\n"
+            f"**Status:** ready-for-agent\n\n"
+            f"**Split depth:** {child_depth}\n\n"
+            f"{checklist}\n"
+        )
+        filename = f"{num:02d}-{_slugify(title)}.md"
+        (issues_dir / filename).write_text(md_body, encoding="utf-8")
+        created_ids.append(f"{parent.feature}/{num:02d}")
+
+    reason = str(plan.get("reason", "Drift watchdog auto-split")).strip()
+    _append_comment(
+        parent,
+        f"Auto-split ({reason}) -> created {', '.join(created_ids)} (depth={child_depth}).",
+        root,
+    )
+    _update_status_file(parent, "split", root)
+    print(json.dumps({"parent": parent.id, "created": created_ids, "depth": child_depth}))
+    return 0
+
+
 def cmd_export_github(root: Path = ROOT) -> int:
-    tickets = [t for t in discover_tickets(root) if t.status != "resolved"]
+    tickets = [t for t in discover_tickets(root) if t.status not in {"resolved", "split"}]
     if not tickets:
         print("# No open local tickets to export.")
         return 0
@@ -208,7 +301,7 @@ def cmd_export_github(root: Path = ROOT) -> int:
     return 0
 
 
-def main() -> int:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local markdown issue tracker CLI")
     parser.add_argument("--root", type=Path, default=ROOT, help="Repository root directory")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -234,9 +327,17 @@ def main() -> int:
     p_resolve.add_argument("ticket_id")
     p_resolve.add_argument("--summary", default="")
 
-    sub.add_parser("export-github", help="Print gh issue create commands for migration")
+    p_split = sub.add_parser("split", help="Auto-split a drifted ticket into smaller sub-tickets")
+    p_split.add_argument("ticket_id")
+    p_split.add_argument("--plan-json", required=True, help="Path to split JSON or `-` for stdin")
+    p_split.add_argument("--max-depth", type=int, default=1, help="Max allowed split depth")
 
-    args = parser.parse_args()
+    sub.add_parser("export-github", help="Print gh issue create commands for migration")
+    return parser
+
+
+def main() -> int:
+    args = _build_parser().parse_args()
     root: Path = args.root
     dispatch = {
         "board": lambda: cmd_board(root),
@@ -245,11 +346,12 @@ def main() -> int:
         "set-status": lambda: cmd_set_status(args.ticket_id, args.status, root),
         "comment": lambda: cmd_comment(args.ticket_id, args.body, root),
         "resolve": lambda: cmd_resolve(args.ticket_id, args.summary, root),
+        "split": lambda: cmd_split(args.ticket_id, args.plan_json, args.max_depth, root),
         "export-github": lambda: cmd_export_github(root),
     }
     try:
         return dispatch[args.command]()
-    except KeyError as exc:
+    except (KeyError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
 
