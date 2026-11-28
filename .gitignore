@@ -10,6 +10,7 @@ htmlcov/
 dist/
 build/
 .sandcastle/.env
+.sandcastle/redact-terms.local.txt
 .sandcastle/logs/
 .sandcastle/worktrees/
 .sandcastle/node_modules/

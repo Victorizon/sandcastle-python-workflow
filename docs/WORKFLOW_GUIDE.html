@@ -599,6 +599,10 @@
           <div class="cmd-row"><code>python scripts/verify_workflow_ready.py</code><button class="copy-btn" type="button">Copy</button></div>
         </div>
         <div class="cheat-item">
+          <div class="cheat-goal">Draft an anonymized upstream bug/improvement issue (no work code)</div>
+          <div class="cmd-row"><code>python scripts/upstream_report.py --kind bug --title "..." --summary "..."</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
           <div class="cheat-goal">Run all 6 Python checks (+ Hypothesis fuzzing)</div>
           <div class="cmd-row"><code>python scripts/check.py</code><button class="copy-btn" type="button">Copy</button></div>
         </div>
@@ -1147,6 +1151,31 @@
               <span class="file-pill">.sandcastle/coach.ts</span>
               <span class="file-pill">.agents/skills/workflow-coach/SKILL.md</span>
               <span class="file-pill">docs/MULTI_ROUND_CASSETTE_PATTERN.md</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 16. ANONYMIZED UPSTREAM ISSUE REPORTER -->
+      <article class="card" data-cat="safety" data-search="upstream report bug improvement anonymize redact privacy issue github">
+        <div class="card-top">
+          <span class="tag safety">Privacy Firewall · Upstream Feedback</span>
+          <span class="when">When a harness bug or improvement occurs at work</span>
+        </div>
+        <h3>16. Anonymized Upstream Issue Reporter (Issue-Only, Human-Approved)</h3>
+        <p class="plain">Report workflow bugs or improvement ideas back to the template repo safely — captures only sanitized environment/harness details (never work code or patches), scrubs all PII/paths/internal terms, previews locally first, and requires explicit human <code>PUBLISH</code> confirmation.</p>
+        <div class="cmd-row"><code>python scripts/upstream_report.py --kind bug --title "Short title" --summary "What happened"</code><button class="copy-btn" type="button">Copy</button></div>
+        <details>
+          <summary>Technical Details — 4-Layer Privacy Firewall &amp; Local Blocklist</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Issue-Only Scope:</strong> Never exports code diffs or work files. Optional <code>--cmd</code> only permits allowlisted harness scripts and replaces any traceback frame outside <code>scripts/</code> or <code>.sandcastle/</code> with <code>&lt;work-repo-frame&gt;</code>.</li>
+              <li><strong>Deterministic Anonymizer + Local Blocklist:</strong> Strips usernames, hostnames, home/repo paths, emails, IPs, internal URLs, ticket IDs, UUIDs, tokens, and any custom company/product terms listed in gitignored <code>.sandcastle/redact-terms.local.txt</code>.</li>
+              <li><strong>Two-Step Human Approval:</strong> Defaults to dry-run (saves <code>.sandcastle/logs/upstream-issue-draft.md</code>); <code>--publish</code> hard-blocks on any residual secret and requires typing <code>PUBLISH</code> verbatim before calling <code>gh issue create</code>.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">scripts/upstream_report.py</span>
+              <span class="file-pill">tests_tooling/test_upstream_report.py</span>
             </div>
           </div>
         </details>

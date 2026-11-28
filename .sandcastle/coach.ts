@@ -132,7 +132,7 @@ export function buildCoachNudges(signals: WorkspaceCoachSignals): CoachNudge[] {
       priority: "urgent",
       title: `Resolve ${signals.openHumanTickets} human-escalated ticket(s) first`,
       detail:
-        "Autonomous cycles pause when tickets are waiting on human decisions. Inspect and unblock them on the board.",
+        "Autonomous cycles pause when tickets are waiting on human decisions. Inspect and unblock them on the board (if caused by a workflow bug, draft an anonymized upstream report with scripts/upstream_report.py).",
       command: "python scripts/local_tracker.py board",
     });
   }
@@ -211,7 +211,7 @@ export function buildCoachNudges(signals: WorkspaceCoachSignals): CoachNudge[] {
       priority: "tip",
       title: `Review ${signals.openTriageTickets} needs-triage proposal(s)`,
       detail:
-        "Promote high-ROI overnight architecture proposals to ready-for-agent or mark low-value ones wontfix.",
+        "Promote high-ROI overnight architecture proposals to ready-for-agent, mark low-value ones wontfix, or report harness improvements upstream via scripts/upstream_report.py (issue-only, auto-anonymized, human-approved).",
       command: "python scripts/local_tracker.py board",
     });
   }
@@ -276,7 +276,9 @@ export function formatEndOfRunFooter(params: {
   if (params.extraCommand) {
     lines.push(`3. Suggested follow-up: ${params.extraCommand}`);
   }
-  lines.push("Tip: Run `npm --prefix .sandcastle run coach` anytime or open docs/WORKFLOW_GUIDE.html.");
+  lines.push(
+    "Tip: Run `npm --prefix .sandcastle run coach` anytime, open docs/WORKFLOW_GUIDE.html, or report anonymized harness bugs/improvements via `python scripts/upstream_report.py`.",
+  );
   return lines.join("\n");
 }
 
