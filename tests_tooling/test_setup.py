@@ -97,3 +97,8 @@ def test_verify_workflow_ready_offline_json() -> None:
     assert data["ready"] is True
     assert len(data["layers"]) == 5
     assert all(layer["passed"] is True for layer in data["layers"])
+
+
+def test_setup_detects_broken_partial_venv_as_missing_python(tmp_path: Path) -> None:
+    (tmp_path / ".venv").mkdir()
+    assert setup_mod._venv_python(tmp_path).is_file() is False
