@@ -26,7 +26,7 @@ import { type AgentKind, createAgent, createDockerSandbox, resolveAgentKind } fr
 import { formatEndOfRunFooter } from "./coach.js";
 import { DriftDetectedError, DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
-import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
+import { REPO_MUTATION_LOCK, acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 import { installGracefulShutdown, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -226,7 +226,7 @@ async function main(): Promise<void> {
   if (mode === "draft-branch") {
     assertCleanGitWorktree();
   }
-  const releaseLock = acquireRunLock(".nightly.lock", "nightly-arch");
+  const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "nightly-arch");
   const uninstallShutdown = installGracefulShutdown(() => releaseLock());
 
   try {

@@ -9,30 +9,16 @@ import path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { z } from "zod";
-import {
-  PMDashboard,
-  parseCheckMetrics,
-  summarizeAgentEventForPm,
-} from "./dashboard.js";
+import { PMDashboard, parseCheckMetrics, summarizeAgentEventForPm } from "./dashboard.js";
 import { createAgent, createDockerSandbox, resolveAgentKind } from "./agent-factory.js";
 import { formatEndOfRunFooter } from "./coach.js";
-import {
-  computeAgentTrustScore,
-  loadHumanRatings,
-  scoreFactoryRunConfidence,
-} from "./confidence.js";
+import { computeAgentTrustScore, loadHumanRatings, scoreFactoryRunConfidence } from "./confidence.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { loadVerifiedRunHistory, recordFactoryRun } from "./run-history.js";
+import { DriftDetectedError, DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import {
-  DriftDetectedError,
-  DriftWatchdog,
-  parseGitNumstat,
-} from "./drift-watchdog.js";
-import {
-  type TrackerTicketSnapshot,
-  acquireRunLock,
-  assertCleanGitWorktree,
-  validatePlannedTicketsAgainstTracker,
+  REPO_MUTATION_LOCK, type TrackerTicketSnapshot, acquireRunLock,
+  assertCleanGitWorktree, commitScratchState, rollbackToCommitClean, validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
 import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
 
@@ -158,6 +144,7 @@ function escalateTicketToHuman(ticketId: string, reason: string, dashboard: PMDa
     execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "set-status", ticketId, "ready-for-human"], {
       stdio: "inherit",
     });
+    commitScratchState(`chore(factory): escalate ${ticketId} to ready-for-human`);
   } catch (err) {
     console.error(`Failed to mark ${ticketId} ready-for-human:`, err);
   }
@@ -207,22 +194,22 @@ async function handleDriftRemediation(
   });
 
   try {
-    const splitRun = await sandcastle.run({
-      sandbox: makeDocker(),
-      name: `Decomposer ${ticket.id}`,
-      agent: createAgent("medium"),
-      promptFile: "./.sandcastle/decompose-prompt.md",
-      promptArgs: {
-        TICKET_ID: ticket.id,
-        DRIFT_REASON: drift.message,
-        PARTIAL_DIFF_STAT: partialDiffStat || "(no committed diff yet)",
-      },
-      output: Output.object({
-        tag: "split",
-        schema: SplitPlanSchema,
-        maxRetries: 2,
-      }),
-    });
+    const splitRun = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: makeDocker(),
+          name: `Decomposer ${ticket.id}`,
+          agent: createAgent("medium"),
+          promptFile: "./.sandcastle/decompose-prompt.md",
+          promptArgs: {
+            TICKET_ID: ticket.id,
+            DRIFT_REASON: drift.message,
+            PARTIAL_DIFF_STAT: partialDiffStat || "(no committed diff yet)",
+          },
+          output: Output.object({ tag: "split", schema: SplitPlanSchema, maxRetries: 2 }),
+        }),
+      { label: `Decomposer ${ticket.id}` },
+    );
 
     execFileSync(
       PYTHON_BIN,
@@ -232,10 +219,7 @@ async function handleDriftRemediation(
         stdio: ["pipe", "inherit", "inherit"],
       },
     );
-    execFileSync("git", ["add", ".scratch/"], { stdio: "ignore" });
-    execFileSync("git", ["commit", "-m", `chore(watchdog): auto-split drifted ticket ${ticket.id}`], {
-      stdio: "ignore",
-    });
+    commitScratchState(`chore(watchdog): auto-split drifted ticket ${ticket.id}`);
     try {
       execFileSync("git", ["branch", "-D", ticket.branch], { stdio: "ignore" });
     } catch {
@@ -643,7 +627,7 @@ async function processTicket(
 
 async function main(): Promise<void> {
   preflightChecks();
-  const releaseLock = acquireRunLock(".run.lock", "factory");
+  const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "factory");
 
   const dashboard = new PMDashboard({
     mode: "factory",
@@ -772,19 +756,23 @@ async function main(): Promise<void> {
 
       let multiMergeConflictIssue: string | null = null;
       if (hostCheckPassed && readyToMerge.length >= 2) {
-        const mergeReview = await sandcastle.run({
-          sandbox: makeDocker(),
-          name: "Post-Merge Cross-Slice Auditor",
-          agent: createAgent("high"),
-          prompt: [
-            `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
-            ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
-            `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
-            `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
-            `Then output <promise>COMPLETE</promise>.`,
-          ].join("\n"),
-          maxIterations: 1,
-        });
+        const mergeReview = await withTransientRetry(
+          () =>
+            sandcastle.run({
+              sandbox: makeDocker(),
+              name: "Post-Merge Cross-Slice Auditor",
+              agent: createAgent("high"),
+              prompt: [
+                `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
+                ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
+                `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
+                `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
+                `Then output <promise>COMPLETE</promise>.`,
+              ].join("\n"),
+              maxIterations: 1,
+            }),
+          { label: "Post-Merge Cross-Slice Auditor" },
+        );
         const mergeVerdict = parseVerdict(mergeReview.stdout);
         if (!mergeVerdict?.approved) {
           multiMergeConflictIssue =
@@ -794,9 +782,9 @@ async function main(): Promise<void> {
       }
 
       if (!hostCheckPassed || multiMergeConflictIssue !== null) {
-        // Atomic rollback so main is NEVER left broken!
+        // Atomic rollback so main is NEVER left broken or dirty with untracked files!
         try {
-          execFileSync("git", ["reset", "--hard", preMergeSha], { stdio: "inherit" });
+          rollbackToCommitClean(preMergeSha);
         } catch (err) {
           console.error(`Failed to roll back main to ${preMergeSha}:`, err);
         }
