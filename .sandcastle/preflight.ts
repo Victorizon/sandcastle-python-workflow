@@ -27,7 +27,25 @@ export interface PlannedTicketCandidate {
   readonly splitDepth: number;
 }
 
+export const REPO_MUTATION_LOCK = ".run.lock";
+
+/**
+ * Best-effort cleanup of dangling git worktree records left behind after a hard
+ * crash (`SIGKILL` / power loss) so `sandcastle/*` branches never get stuck locked.
+ */
+export function pruneStaleGitWorktrees(cwd = process.cwd()): void {
+  try {
+    execFileSync("git", ["worktree", "prune"], {
+      cwd,
+      stdio: "ignore",
+    });
+  } catch {
+    // Non-fatal: e.g., non-git temp dir or older git without worktree support
+  }
+}
+
 export function assertCleanGitWorktree(cwd = process.cwd()): void {
+  pruneStaleGitWorktrees(cwd);
   const status = execFileSync("git", ["status", "--porcelain"], {
     cwd,
     encoding: "utf8",
@@ -40,6 +58,37 @@ export function assertCleanGitWorktree(cwd = process.cwd()): void {
         `Commit or stash your changes first (\`git stash\` or \`git commit\`).`,
     );
   }
+}
+
+/**
+ * Commits ONLY `.scratch/` ticket/tracker state if dirty so escalations or
+ * auto-splits never leave uncommitted `.scratch/` edits that deadlock the next cycle.
+ */
+export function commitScratchState(message: string, cwd = process.cwd()): boolean {
+  const dirty = execFileSync("git", ["status", "--porcelain", "--", ".scratch/"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["pipe", "pipe", "pipe"],
+  }).trim();
+  if (dirty.length === 0) {
+    return false;
+  }
+  execFileSync("git", ["add", "--", ".scratch/"], { cwd, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", message, "--", ".scratch/"], { cwd, stdio: "ignore" });
+  return true;
+}
+
+/**
+ * Atomically rolls back HEAD to `targetSha` AND removes untracked files left behind
+ * by a failed merge (preserving `.sandcastle/logs` and `.venv`) so the next run
+ * starts from a guaranteed-clean working tree.
+ */
+export function rollbackToCommitClean(targetSha: string, cwd = process.cwd()): void {
+  execFileSync("git", ["reset", "--hard", targetSha], { cwd, stdio: "inherit" });
+  execFileSync("git", ["clean", "-fd", "-e", ".sandcastle/logs", "-e", ".venv"], {
+    cwd,
+    stdio: "inherit",
+  });
 }
 
 function isPidAlive(pid: number): boolean {

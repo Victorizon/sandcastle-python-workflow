@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { DriftDetectedError } from "./drift-watchdog.js";
 import { countLocalTicketsByStatus, evaluateGoalContract } from "./goal-core.js";
+import {
+  REPO_MUTATION_LOCK,
+  acquireRunLock,
+  assertCleanGitWorktree,
+  commitScratchState,
+  rollbackToCommitClean,
+} from "./preflight.js";
 import {
   classifyError,
   installGracefulShutdown,
@@ -113,4 +121,59 @@ test("installGracefulShutdown registers and cleanly uninstalls SIGINT/SIGTERM li
   uninstall();
   assert.equal(process.listenerCount("SIGINT"), beforeSigint);
   assert.equal(process.listenerCount("SIGTERM"), beforeSigterm);
+});
+
+test("commitScratchState and rollbackToCommitClean keep git worktree clean for subsequent cycles", () => {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "sandcastle-git-continuity-"));
+  const git = (args: string[]) =>
+    execFileSync("git", args, { cwd: repo, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  try {
+    git(["init"]);
+    git(["config", "user.email", "test@example.com"]);
+    git(["config", "user.name", "Test"]);
+    writeFileSync(path.join(repo, "README.md"), "base\n", "utf8");
+    git(["add", "README.md"]);
+    git(["commit", "-m", "initial"]);
+    const baseSha = git(["rev-parse", "HEAD"]);
+
+    // 1. No-op when .scratch/ is clean
+    assert.equal(commitScratchState("chore: noop", repo), false);
+
+    // 2. Escalation mutating .scratch/ commits cleanly and leaves worktree clean
+    mkdirSync(path.join(repo, ".scratch", "feat", "issues"), { recursive: true });
+    writeFileSync(path.join(repo, ".scratch", "feat", "issues", "01.md"), "status: ready-for-human\n", "utf8");
+    assert.equal(commitScratchState("chore(factory): escalate 01", repo), true);
+    assert.doesNotThrow(() => assertCleanGitWorktree(repo));
+
+    // 3. Rollback resets HEAD AND cleans untracked files while preserving .sandcastle/logs
+    mkdirSync(path.join(repo, ".sandcastle", "logs"), { recursive: true });
+    writeFileSync(path.join(repo, ".sandcastle", "logs", "keep.log"), "ok\n", "utf8");
+    writeFileSync(path.join(repo, "stray_untracked.py"), "x = 1\n", "utf8");
+    rollbackToCommitClean(baseSha, repo);
+
+    assert.equal(git(["rev-parse", "HEAD"]), baseSha);
+    assert.equal(existsSync(path.join(repo, "stray_untracked.py")), false);
+    assert.equal(existsSync(path.join(repo, ".sandcastle", "logs", "keep.log")), true);
+    assert.equal(git(["status", "--porcelain", "--", "stray_untracked.py"]), "");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("shared REPO_MUTATION_LOCK prevents concurrent factory/nightly/bakeoff collisions", () => {
+  const logsDir = mkdtempSync(path.join(os.tmpdir(), "sandcastle-lock-"));
+  const release = acquireRunLock(REPO_MUTATION_LOCK, "factory", logsDir);
+  try {
+    assert.throws(
+      () => acquireRunLock(REPO_MUTATION_LOCK, "nightly-arch", logsDir),
+      /Another Sandcastle factory is already active/u,
+    );
+    assert.throws(
+      () => acquireRunLock(REPO_MUTATION_LOCK, "bakeoff", logsDir),
+      /Another Sandcastle factory is already active/u,
+    );
+  } finally {
+    release();
+    rmSync(logsDir, { recursive: true, force: true });
+  }
 });

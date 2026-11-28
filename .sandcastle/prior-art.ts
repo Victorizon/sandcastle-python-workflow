@@ -19,6 +19,7 @@ import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
 import { z } from "zod";
 import { createAgent, createDockerSandbox } from "./agent-factory.js";
+import { withTransientRetry } from "./resilience.js";
 
 export const ResearchDepthSchema = z.enum([
   "auto",
@@ -226,22 +227,26 @@ export async function runPreflightPriorArtResearch(params: {
   );
 
   const runPass = async (passName: string, angle: string): Promise<PriorArtCard> => {
-    const res = await sandcastle.run({
-      sandbox: createDockerSandbox(params.imageName),
-      name: `Prior-Art ${passName} (${params.slug})`,
-      agent: createAgent(resolvedDepth === "fast" ? "medium" : "high"),
-      prompt: [
-        `Perform bounded Prior-Art Research (${profile.rounds} round(s), max ${profile.maxMinutes}m) for goal: ${params.name}.`,
-        `Focus angle: ${angle}`,
-        specText ? `Frozen Spec:\n${specText.slice(0, 3000)}` : "",
-        `Do NOT edit repository files. Return ONLY JSON inside <prior-art> tags matching: verdict (adopt|borrow|build), summary, requiresDependencyApproval, recommendedPackages, borrowedPatterns, rejectedAlternatives, nextStep.`,
-        `Then output <promise>COMPLETE</promise>.`,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-      maxIterations: profile.rounds,
-      output: Output.object({ tag: "prior-art", schema: PriorArtCardSchema, maxRetries: 2 }),
-    });
+    const res = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: createDockerSandbox(params.imageName),
+          name: `Prior-Art ${passName} (${params.slug})`,
+          agent: createAgent(resolvedDepth === "fast" ? "medium" : "high"),
+          prompt: [
+            `Perform bounded Prior-Art Research (${profile.rounds} round(s), max ${profile.maxMinutes}m) for goal: ${params.name}.`,
+            `Focus angle: ${angle}`,
+            specText ? `Frozen Spec:\n${specText.slice(0, 3000)}` : "",
+            `Do NOT edit repository files. Return ONLY JSON inside <prior-art> tags matching: verdict (adopt|borrow|build), summary, requiresDependencyApproval, recommendedPackages, borrowedPatterns, rejectedAlternatives, nextStep.`,
+            `Then output <promise>COMPLETE</promise>.`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          maxIterations: profile.rounds,
+          output: Output.object({ tag: "prior-art", schema: PriorArtCardSchema, maxRetries: 2 }),
+        }),
+      { label: `Prior-Art ${passName} (${params.slug})` },
+    );
     return res.output;
   };
 
@@ -251,19 +256,23 @@ export async function runPreflightPriorArtResearch(params: {
       runPass("Pass-A (Adoptable Libraries)", "Identify mature GitHub/PyPI/npm libraries we could adopt cleanly."),
       runPass("Pass-B (Borrow / Minimal Custom)", "Identify battle-tested patterns to borrow for a zero/low-dependency custom build."),
     ]);
-    const synth = await sandcastle.run({
-      sandbox: createDockerSandbox(params.imageName),
-      name: `Prior-Art Summarizer (${params.slug})`,
-      agent: createAgent("medium"),
-      prompt: [
-        `Distill these two independent Prior-Art Research passes into ONE crisp, unambiguous decision so downstream Builders do not get confused by excess context.`,
-        `Pass A (Libraries):\n${JSON.stringify(passA, null, 2)}`,
-        `Pass B (Borrow/Custom):\n${JSON.stringify(passB, null, 2)}`,
-        `Do NOT edit repository files. Return ONLY the consolidated JSON inside <prior-art> tags, then <promise>COMPLETE</promise>.`,
-      ].join("\n\n"),
-      maxIterations: 1,
-      output: Output.object({ tag: "prior-art", schema: PriorArtCardSchema, maxRetries: 2 }),
-    });
+    const synth = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: createDockerSandbox(params.imageName),
+          name: `Prior-Art Summarizer (${params.slug})`,
+          agent: createAgent("medium"),
+          prompt: [
+            `Distill these two independent Prior-Art Research passes into ONE crisp, unambiguous decision so downstream Builders do not get confused by excess context.`,
+            `Pass A (Libraries):\n${JSON.stringify(passA, null, 2)}`,
+            `Pass B (Borrow/Custom):\n${JSON.stringify(passB, null, 2)}`,
+            `Do NOT edit repository files. Return ONLY the consolidated JSON inside <prior-art> tags, then <promise>COMPLETE</promise>.`,
+          ].join("\n\n"),
+          maxIterations: 1,
+          output: Output.object({ tag: "prior-art", schema: PriorArtCardSchema, maxRetries: 2 }),
+        }),
+      { label: `Prior-Art Summarizer (${params.slug})` },
+    );
     finalCard = synth.output;
   } else {
     finalCard = await runPass("Scout", "Compare top existing GitHub/PyPI/npm solutions vs. borrowing patterns vs. custom build.");

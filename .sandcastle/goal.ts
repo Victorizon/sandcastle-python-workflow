@@ -157,22 +157,27 @@ async function runDeterministicSpecAudit(
   console.log(
     `\n--> Running fresh-context End-of-Goal Spec Audit against ${contract.specFile} (${specItems.length} items)...`,
   );
-  const auditRun = await sandcastle.run({
-    sandbox: createDockerSandbox(IMAGE_NAME),
-    name: `Spec Auditor (${contract.slug})`,
-    agent: createAgent("high"),
-    promptFile: "./.sandcastle/spec-audit-prompt.md",
-    promptArgs: {
-      START_COMMIT: startCommit,
-      SPEC_FILE: contract.specFile,
-      PASSING_TESTS: [...passingTests].filter((t) => t.includes("::")).join("\n") || "(none)",
-    },
-    output: Output.object({
-      tag: "spec-audit",
-      schema: SpecAuditOutputSchema,
-      maxRetries: 2,
-    }),
-  });
+  const specFile = contract.specFile;
+  const auditRun = await withTransientRetry(
+    () =>
+      sandcastle.run({
+        sandbox: createDockerSandbox(IMAGE_NAME),
+        name: `Spec Auditor (${contract.slug})`,
+        agent: createAgent("high"),
+        promptFile: "./.sandcastle/spec-audit-prompt.md",
+        promptArgs: {
+          START_COMMIT: startCommit,
+          SPEC_FILE: specFile,
+          PASSING_TESTS: [...passingTests].filter((t) => t.includes("::")).join("\n") || "(none)",
+        },
+        output: Output.object({
+          tag: "spec-audit",
+          schema: SpecAuditOutputSchema,
+          maxRetries: 2,
+        }),
+      }),
+    { label: `Spec Auditor (${contract.slug})` },
+  );
 
   return verifySpecAuditAgainstTests({
     specItems,

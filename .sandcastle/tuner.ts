@@ -25,6 +25,7 @@ import {
   loadVerifiedRunHistory,
 } from "./run-history.js";
 import { writePmHtmlReport } from "./pm-report.js";
+import { withTransientRetry } from "./resilience.js";
 
 export type TunableParam =
   | "DRIFT_MAX_MINUTES"
@@ -246,29 +247,33 @@ async function main(): Promise<void> {
   let clampedNotes: readonly string[] = [];
 
   if (!statsOnly) {
-    const tuneRun = await sandcastle.run({
-      sandbox: createDockerSandbox(),
-      name: "Parameter Tuner (Read-Only)",
-      agent: createAgent("medium"),
-      promptFile: "./.sandcastle/tune-prompt.md",
-      promptArgs: {
-        AGGREGATED_STATS_JSON: JSON.stringify(
-          {
-            stats,
-            agentTrust: trust,
-            recentHumanFeedback: humanRatings.slice(-10),
+    const tuneRun = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: createDockerSandbox(),
+          name: "Parameter Tuner (Read-Only)",
+          agent: createAgent("medium"),
+          promptFile: "./.sandcastle/tune-prompt.md",
+          promptArgs: {
+            AGGREGATED_STATS_JSON: JSON.stringify(
+              {
+                stats,
+                agentTrust: trust,
+                recentHumanFeedback: humanRatings.slice(-10),
+              },
+              null,
+              2,
+            ),
+            SAFETY_CLAMPS_JSON: JSON.stringify(SAFETY_CLAMPS, null, 2),
           },
-          null,
-          2,
-        ),
-        SAFETY_CLAMPS_JSON: JSON.stringify(SAFETY_CLAMPS, null, 2),
-      },
-      output: Output.object({
-        tag: "tuning",
-        schema: TuningProposalSchema,
-        maxRetries: 2,
-      }),
-    });
+          output: Output.object({
+            tag: "tuning",
+            schema: TuningProposalSchema,
+            maxRetries: 2,
+          }),
+        }),
+      { label: "Parameter Tuner" },
+    );
 
     const clamped = enforceSafetyClamps(tuneRun.output);
     proposal = clamped.safeProposal;

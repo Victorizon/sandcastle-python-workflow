@@ -23,7 +23,8 @@ import { formatEndOfRunFooter } from "./coach.js";
 import { parseCheckMetrics } from "./dashboard.js";
 import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
-import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
+import { REPO_MUTATION_LOCK, acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
+import { installGracefulShutdown, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 
@@ -192,10 +193,12 @@ function parseBakeoffArgs(argv: readonly string[]): { readonly slug: string; rea
 
 async function main(): Promise<void> {
   assertCleanGitWorktree();
-  const releaseLock = acquireRunLock(".bakeoff.lock", "bakeoff");
+  const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "bakeoff");
+  const uninstallShutdown = installGracefulShutdown(() => releaseLock());
   try {
     await runBakeoff();
   } finally {
+    uninstallShutdown();
     releaseLock();
   }
 }
@@ -205,17 +208,21 @@ async function runBakeoff(): Promise<void> {
   console.log(`\n=== Parallel Prototype Bake-Off: ${slug} ===`);
 
   // Phase 1: Shared exploration session
-  const parent = await sandcastle.run({
-    sandbox: makeDocker(),
-    name: `Bakeoff Explorer (${slug})`,
-    agent: createAgent("medium"),
-    prompt: [
-      `Explore this repo (read GLOSSARY.md, docs/adr/, src/, and tests/) to understand the constraints for:`,
-      brief,
-      `Do NOT edit any files yet. Summarize the existing seams and constraints, then output <promise>COMPLETE</promise>.`,
-    ].join("\n"),
-    maxIterations: 1,
-  });
+  const parent = await withTransientRetry(
+    () =>
+      sandcastle.run({
+        sandbox: makeDocker(),
+        name: `Bakeoff Explorer (${slug})`,
+        agent: createAgent("medium"),
+        prompt: [
+          `Explore this repo (read GLOSSARY.md, docs/adr/, src/, and tests/) to understand the constraints for:`,
+          brief,
+          `Do NOT edit any files yet. Summarize the existing seams and constraints, then output <promise>COMPLETE</promise>.`,
+        ].join("\n"),
+        maxIterations: 1,
+      }),
+    { label: `Bakeoff Explorer (${slug})` },
+  );
 
   // Phase 2: Parallel fork fan-out on 3 DISTINCT prototype branches (each guarded by DriftWatchdog)
   await Promise.allSettled(
@@ -298,22 +305,26 @@ async function runBakeoff(): Promise<void> {
   const variantDiffSnippets: string[] = scored.map((s) => s.snippet);
 
   // Phase 4: Fresh-Context Adversarial Judge
-  const judgeRun = await sandcastle.run({
-    sandbox: makeDocker(),
-    name: `Bakeoff Judge (${slug})`,
-    agent: createAgent("high"),
-    promptFile: "./.sandcastle/bakeoff-judge-prompt.md",
-    promptArgs: {
-      PROBLEM_BRIEF: brief,
-      SCORECARDS_JSON: JSON.stringify(scorecards, null, 2),
-      VARIANT_DIFFS: variantDiffSnippets.join("\n\n"),
-    },
-    output: Output.object({
-      tag: "judgement",
-      schema: BakeoffJudgementSchema,
-      maxRetries: 2,
-    }),
-  });
+  const judgeRun = await withTransientRetry(
+    () =>
+      sandcastle.run({
+        sandbox: makeDocker(),
+        name: `Bakeoff Judge (${slug})`,
+        agent: createAgent("high"),
+        promptFile: "./.sandcastle/bakeoff-judge-prompt.md",
+        promptArgs: {
+          PROBLEM_BRIEF: brief,
+          SCORECARDS_JSON: JSON.stringify(scorecards, null, 2),
+          VARIANT_DIFFS: variantDiffSnippets.join("\n\n"),
+        },
+        output: Output.object({
+          tag: "judgement",
+          schema: BakeoffJudgementSchema,
+          maxRetries: 2,
+        }),
+      }),
+    { label: `Bakeoff Judge (${slug})` },
+  );
 
   const logsDir = path.join(".sandcastle", "logs");
   mkdirSync(logsDir, { recursive: true });
