@@ -134,6 +134,31 @@ def _run_opengrep(root: Path) -> tuple[str, bool, str]:
     return ("opengrep", False, tail or f"exited {proc.returncode}")
 
 
+def _run_crosshair(root: Path) -> tuple[str, bool, str]:
+    crosshair_bin = _resolve_py_tool("crosshair")
+    src_dir = root / "src"
+    if crosshair_bin is None or not src_dir.exists():
+        return ("crosshair", True, "skipped (crosshair not installed or src/ missing)")
+    proc = subprocess.run(
+        [
+            crosshair_bin,
+            "check",
+            str(src_dir),
+            "--analysis_kind=asserts,PEP316",
+            "--per_condition_timeout=3",
+            "--per_path_timeout=1",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return ("crosshair", True, "0 symbolic counterexamples found in src/")
+    tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[:10])
+    return ("crosshair", False, tail or f"exited {proc.returncode}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Deterministic Adversarial Scan Runner")
     parser.add_argument("--root", type=Path, default=ROOT, help="Repository root directory")
@@ -146,6 +171,7 @@ def main() -> int:
         _run_gitleaks(args.root),
         _run_diff_cover(args.root, args.base),
         _run_opengrep(args.root),
+        _run_crosshair(args.root),
     ]
 
     failed = False

@@ -21,3 +21,4 @@ def test_adversarial_scan_passes_on_real_repo() -> None:
     assert res.returncode == 0, res.stdout + res.stderr
     assert "Deterministic Adversarial Scan" in res.stdout
     assert "[PASS] diff-cover:" in res.stdout
+    assert "[PASS] crosshair:" in res.stdout
