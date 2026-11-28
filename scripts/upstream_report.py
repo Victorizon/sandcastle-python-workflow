@@ -34,37 +34,49 @@ DRAFT_OUTPUT_PATH = ROOT / ".sandcastle" / "logs" / "upstream-issue-draft.md"
 
 ALLOWLISTED_HARNESS_PREFIXES = ("scripts/", ".sandcastle/")
 SAFE_PUBLIC_HOSTS = frozenset(
+    {"pypi.org", "registry.npmjs.org", "docs.python.org", "example.com", "example.test"}
+)
+SAFE_UPSTREAM_URL_PREFIX = f"https://github.com/{DEFAULT_UPSTREAM_REPO.lower()}"
+SAFE_PYTHON_SCRIPTS = frozenset(
     {
-        "github.com",
-        "pypi.org",
-        "registry.npmjs.org",
-        "docs.python.org",
-        "example.com",
-        "example.test",
+        "scripts/check.py",
+        "scripts/verify_workflow_ready.py",
+        "scripts/anti_bloat_guard.py",
+        "scripts/adversarial_scan.py",
+        "scripts/arch_map.py",
+        "scripts/ratchet.py",
+        "scripts/setup.py",
     }
 )
+SAFE_NPM_SCRIPTS = frozenset({"diagnose", "typecheck", "test"})
 
+_GIT_SSH_RE = re.compile(r"(?:ssh://[^\s\"'<>]+|\bgit@[A-Za-z0-9.-]+:[^\s\"'<>]+)")
+_UNC_PATH_RE = re.compile(r"\\\\[A-Za-z0-9._-]+\\[^\s\"'<>]+")
+_WIN_USER_PATH_RE = re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+", re.IGNORECASE)
+_WIN_DRIVE_PATH_RE = re.compile(r"\b[A-Za-z]:\\[^\s\"'<>]+")
+_UNIX_HOME_PATH_RE = re.compile(r"/(?:home|Users)/[^/\s\"']+")
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_IPV6_RE = re.compile(r"\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{0,4}\b")
 _URL_RE = re.compile(r"https?://([A-Za-z0-9.-]+)(?::\d+)?(?:/[^\s)\"'>]*)?")
-_WIN_USER_PATH_RE = re.compile(r"[A-Za-z]:\\Users\\[^\\\s\"']+", re.IGNORECASE)
-_UNIX_HOME_PATH_RE = re.compile(r"/(?:home|Users)/[^/\s\"']+")
 _WIN_DOMAIN_USER_RE = re.compile(r"\b[A-Z][A-Z0-9_-]{1,20}\\[A-Za-z][A-Za-z0-9._-]{1,30}\b")
 _UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"
 )
 _TICKET_RE = re.compile(r"\b(?!REQ-|INV-|OUT-|ADR-|HTTP-|UTF-)[A-Z]{2,10}-\d{1,7}\b")
+_SLICE_ID_RE = re.compile(r"\b[a-z][a-z0-9-]{2,}/\d{2,4}\b")
 _TOKEN_RE = re.compile(
-    r"(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}"
-    r"|gh[pousr]_[A-Za-z0-9]{20,}"
-    r"|github_pat_[A-Za-z0-9_]{20,}"
-    r"|sk-[A-Za-z0-9_-]{16,}"
-    r"|AKIA[0-9A-Z]{16}"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
+    r"(?:Bearer\s+[A-Za-z0-9._~+/=-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}"
+    r"|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}|glpat-[A-Za-z0-9_-]{16,}|npm_[A-Za-z0-9]{20,}"
+    r"|AIza[0-9A-Za-z_-]{20,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})"
+)
+_ENV_SECRET_RE = re.compile(
+    r"(?i)[A-Z0-9_]*(?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*['\"]?[^\s'\"]{6,}"
 )
 _RESIDUAL_SECRET_PATTERNS = (
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"),
-    re.compile(r"(?i)\b(?:api[_-]?key|secret|password|passwd|token)\s*[:=]\s*['\"]?[^\s'\"]{8,}"),
+    _ENV_SECRET_RE,
     _TOKEN_RE,
 )
 _TRACEBACK_FILE_RE = re.compile(r'^(\s*File\s+")([^"]+)(".*)$')
@@ -73,12 +85,11 @@ _TRACEBACK_FILE_RE = re.compile(r'^(\s*File\s+")([^"]+)(".*)$')
 def load_local_redact_terms(terms_file: Path = REDACT_TERMS_PATH) -> list[str]:
     if not terms_file.is_file():
         return []
-    terms: list[str] = []
-    for raw in terms_file.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if line and not line.startswith("#"):
-            terms.append(line)
-    return sorted(set(terms), key=len, reverse=True)
+    raw_lines = terms_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    terms = {
+        line.strip() for line in raw_lines if line.strip() and not line.strip().startswith("#")
+    }
+    return sorted(terms, key=len, reverse=True)
 
 
 def _replace_literal_ci(text: str, needle: str, replacement: str) -> str:
@@ -148,15 +159,25 @@ def anonymize_text(text: str, ctx: AnonymizeContext | None = None) -> str:
     for home_variant in (str(resolved_home), resolved_home.as_posix()):
         out = _replace_literal_ci(out, home_variant, "<HOME>")
 
+    out = _UNC_PATH_RE.sub("<UNC_PATH>", out)
     out = _WIN_USER_PATH_RE.sub("<HOME>", out)
+    out = _WIN_DRIVE_PATH_RE.sub("<WIN_PATH>", out)
     out = _UNIX_HOME_PATH_RE.sub("<HOME>", out)
+    out = _GIT_SSH_RE.sub("<GIT_SSH_URL>", out)
     out = _TOKEN_RE.sub("[REDACTED_SECRET]", out)
+    out = _ENV_SECRET_RE.sub("[REDACTED_SECRET]", out)
     out = _EMAIL_RE.sub("<EMAIL>", out)
     out = _IPV4_RE.sub("<IP>", out)
+    out = _IPV6_RE.sub("<IP>", out)
 
     def _scrub_url(m: re.Match[str]) -> str:
+        full = m.group(0)
         host = m.group(1).lower()
-        return m.group(0) if host in SAFE_PUBLIC_HOSTS else "<INTERNAL_URL>"
+        if full.lower().startswith(SAFE_UPSTREAM_URL_PREFIX):
+            return full
+        if host == "github.com":
+            return "<GITHUB_URL>"
+        return full if host in SAFE_PUBLIC_HOSTS else "<INTERNAL_URL>"
 
     out = _URL_RE.sub(_scrub_url, out)
     out = _WIN_DOMAIN_USER_RE.sub("<DOMAIN_USER>", out)
@@ -176,15 +197,11 @@ def anonymize_text(text: str, ctx: AnonymizeContext | None = None) -> str:
 
 
 def find_residual_secrets(text: str) -> list[str]:
-    hits: list[str] = []
-    for pat in _RESIDUAL_SECRET_PATTERNS:
-        if pat.search(text):
-            hits.append(pat.pattern)
-    return hits
+    return [pat.pattern for pat in _RESIDUAL_SECRET_PATTERNS if pat.search(text)]
 
 
 def is_allowlisted_harness_command(cmd_str: str) -> bool:
-    """Only allow running workflow harness scripts/commands — never arbitrary shell or src/ code."""
+    """Only allow strict read-only workflow diagnostic commands — never arbitrary scripts."""
     try:
         tokens = shlex.split(cmd_str, posix=(os.name != "nt"))
     except ValueError:
@@ -194,9 +211,18 @@ def is_allowlisted_harness_command(cmd_str: str) -> bool:
     head = Path(tokens[0]).name.lower()
     if head in {"python", "python3", "python.exe"}:
         script = tokens[1].replace("\\", "/")
-        return script.startswith("scripts/") and script.endswith(".py")
-    if head in {"npm", "npm.cmd"}:
-        return len(tokens) >= 4 and tokens[1] == "--prefix" and tokens[2] == ".sandcastle"
+        return script in SAFE_PYTHON_SCRIPTS and (
+            script != "scripts/setup.py" or "--check-only" in tokens[2:]
+        )
+    if head in {"npm", "npm.cmd"} and len(tokens) >= 4:
+        return (
+            tokens[1] == "--prefix"
+            and tokens[2] == ".sandcastle"
+            and (
+                tokens[3] == "test"
+                or (tokens[3] == "run" and len(tokens) >= 5 and tokens[4] in SAFE_NPM_SCRIPTS)
+            )
+        )
     return False
 
 
@@ -266,7 +292,7 @@ def summarize_latest_trace(repo_root: Path = ROOT) -> str | None:
         phase = str(span.get("phase", "unknown"))
         outcome = str(span.get("outcome", "unknown"))
         dur_s = float(span.get("durationMs", 0)) / 1000.0
-        detail = str(span.get("detail", "")).strip()
+        detail = _SLICE_ID_RE.sub("<SLICE_ID>", str(span.get("detail", "")).strip())
         lines.append(
             f"- c{span.get('cycle', '?')} `{phase}` -> `{outcome}` ({dur_s:.1f}s) {detail}"
         )
@@ -346,29 +372,15 @@ def _publish_github_issue(repo: str, title: str, body: str, kind: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="Build and (after human approval) publish anonymized upstream issue reports."
-    )
+    parser = argparse.ArgumentParser(description="Anonymized upstream issue reporter.")
     parser.add_argument("--kind", choices=("bug", "improvement"), default="bug")
     parser.add_argument("--title", required=True, help="Short issue title (auto-anonymized)")
     parser.add_argument("--summary", required=True, help="Plain-English description (no work code)")
     parser.add_argument("--repro", default="", help="Optional reproduction steps")
-    parser.add_argument(
-        "--cmd",
-        default="",
-        help="Optional allowlisted harness command to run and attach sanitized output",
-    )
-    parser.add_argument(
-        "--include-latest-trace",
-        action="store_true",
-        help="Attach anonymized phase timings & verdicts from the latest Sandcastle run trace",
-    )
+    parser.add_argument("--cmd", default="", help="Optional allowlisted diagnostic command")
+    parser.add_argument("--include-latest-trace", action="store_true", help="Attach latest trace")
     parser.add_argument("--repo", default=DEFAULT_UPSTREAM_REPO, help="Upstream GitHub owner/repo")
-    parser.add_argument(
-        "--publish",
-        action="store_true",
-        help="Prompt for human confirmation (type PUBLISH) and open the GitHub issue",
-    )
+    parser.add_argument("--publish", action="store_true", help="Confirm PUBLISH and open issue")
     args = parser.parse_args(argv)
 
     cmd_exit: int | None = None

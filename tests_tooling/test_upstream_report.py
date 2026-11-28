@@ -185,3 +185,50 @@ def test_trace_summary_is_anonymized_before_inclusion(tmp_path: Path) -> None:
     assert "post_merge_audit" in body
     assert "internal.corp.local" not in body
     assert "jdoe@corp.local" not in body
+
+
+def test_privacy_redteam_blocks_enterprise_leaks_and_unsafe_commands(tmp_path: Path) -> None:
+    ctx = reporter.AnonymizeContext(repo_root=tmp_path, username="jdoe", hostname="CORP-LAPTOP-9")
+    enterprise_probes = [
+        ("git@git.internal.corp:sec-team/secret-autoinvest.git", "secret-autoinvest"),
+        (r"\\fileserver01.corp.local\finance\exports\q4.csv", "fileserver01"),
+        ("2001:0db8:85a3:0000:0000:8a2e:0370:7334", "2001:0db8"),
+        ("xox" + "b-123456789012-123456789012-AbCdEfGhIjKlMnOpQrStUvWx", "xox" + "b-"),
+        ("https://github.com/AcmeCorp/secret-internal-repo/pull/42", "AcmeCorp"),
+        ("AZURE_CLIENT_SECRET=MySuperSecretValue999!", "MySuperSecretValue999"),
+        (r"D:\Work\ClientAlpha\secrets\config.yaml", "ClientAlpha"),
+    ]
+    for payload, forbidden in enterprise_probes:
+        scrubbed = reporter.anonymize_text(payload, ctx)
+        assert forbidden.lower() not in scrubbed.lower(), f"Leaked {forbidden} in: {scrubbed}"
+
+    # Strict allowlist blocks arbitrary execution & work-ticket dumps
+    assert (
+        reporter.is_allowlisted_harness_command("python scripts/local_tracker.py view x/01")
+        is False
+    )
+    assert (
+        reporter.is_allowlisted_harness_command("python scripts/venv_run.py python -c '1'") is False
+    )
+    assert (
+        reporter.is_allowlisted_harness_command("python scripts/upstream_report.py --publish")
+        is False
+    )
+    assert reporter.is_allowlisted_harness_command("python scripts/setup.py") is False
+    assert reporter.is_allowlisted_harness_command("python scripts/setup.py --check-only") is True
+    assert reporter.is_allowlisted_harness_command("npm --prefix .sandcastle run diagnose") is True
+
+    # Trace summarizer scrubs work feature slugs (<slug>/<NN> -> <SLICE_ID>)
+    runs_dir = tmp_path / ".sandcastle" / "logs" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    trace_file = runs_dir / "trace-slug.jsonl"
+    trace_file.write_text(
+        '{"cycle":1,"phase":"planner","outcome":"fail","durationMs":900,'
+        '"detail":"dropped acme-billing-migration/01"}\n',
+        encoding="utf-8",
+    )
+    (runs_dir / "latest-trace.txt").write_text(f"{trace_file}\n", encoding="utf-8")
+    summary = reporter.summarize_latest_trace(tmp_path)
+    assert summary is not None
+    assert "acme-billing-migration" not in summary
+    assert "<SLICE_ID>" in summary

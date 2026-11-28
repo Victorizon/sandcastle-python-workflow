@@ -245,6 +245,13 @@ flowchart LR
   n_scripts_test_guard_py --> n_scripts_test_quality_ast_py
   n_scripts_test_guard_py --> n_scripts_venv_run_py
   n_scripts_test_quality_ast_py --> n_scripts_test_guard_py
+  n_scripts_upstream_report_py --> n_scripts_adversarial_scan_py
+  n_scripts_upstream_report_py --> n_scripts_anti_bloat_guard_py
+  n_scripts_upstream_report_py --> n_scripts_arch_map_py
+  n_scripts_upstream_report_py --> n_scripts_check_py
+  n_scripts_upstream_report_py --> n_scripts_ratchet_py
+  n_scripts_upstream_report_py --> n_scripts_setup_py
+  n_scripts_upstream_report_py --> n_scripts_verify_workflow_ready_py
   n_scripts_upstream_report_py -.-> n_state_sandcastle_logs
   n_scripts_verify_workflow_ready_py --> n_sandcastle_bakeoff_judge_prompt_md
   n_scripts_verify_workflow_ready_py --> n_sandcastle_bakeoff_variant_prompt_md
@@ -280,15 +287,15 @@ flowchart LR
 
 | Component | Referenced / Invoked By (Count) | Connected Callers |
 | --- | ---: | --- |
-| `scripts/check.py` | 19 | `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `.sandcastle/bakeoff-judge-prompt.md`, `.sandcastle/bakeoff-variant-prompt.md`, `.sandcastle/bakeoff.ts` (+14 more) |
+| `scripts/check.py` | 20 | `.github/workflows/ci.yml`, `.pre-commit-config.yaml`, `.sandcastle/bakeoff-judge-prompt.md`, `.sandcastle/bakeoff-variant-prompt.md`, `.sandcastle/bakeoff.ts` (+15 more) |
 | `scripts/local_tracker.py` | 12 | `.sandcastle/coach.ts`, `.sandcastle/decompose-prompt.md`, `.sandcastle/e2e-synthetic.ts`, `.sandcastle/fix-prompt.md`, `.sandcastle/goal-core.ts` (+7 more) |
-| `scripts/ratchet.py` | 9 | `.github/workflows/ratchet-shrink.yml`, `.pre-commit-config.yaml`, `.sandcastle/coach.ts`, `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts` (+4 more) |
+| `scripts/ratchet.py` | 10 | `.github/workflows/ratchet-shrink.yml`, `.pre-commit-config.yaml`, `.sandcastle/coach.ts`, `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts` (+5 more) |
 | `scripts/test_guard.py` | 9 | `.github/workflows/ratchet-shrink.yml`, `.sandcastle/e2e-synthetic.ts`, `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/run.ts` (+4 more) |
 | `.sandcastle/resilience.ts` | 8 | `.sandcastle/bakeoff.ts`, `.sandcastle/coach.ts`, `.sandcastle/goal-core.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts` (+3 more) |
+| `scripts/adversarial_scan.py` | 7 | `.github/workflows/ci.yml`, `.sandcastle/coach.ts`, `.sandcastle/review-prompt.md`, `.sandcastle/run.ts`, `scripts/test_guard.py` (+2 more) |
 | `scripts/coverage-baseline.json` | 7 | `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/tune-prompt.md`, `.sandcastle/tuner.ts`, `scripts/arch_map.py` (+2 more) |
 | `.sandcastle/agent-factory.ts` | 6 | `.sandcastle/bakeoff.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts`, `.sandcastle/prior-art.ts`, `.sandcastle/run.ts` (+1 more) |
 | `.sandcastle/confidence.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/goal.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/pm-report.ts` | 6 | `.sandcastle/bakeoff.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/run-history.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/confidence.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
-| `scripts/adversarial_scan.py` | 6 | `.github/workflows/ci.yml`, `.sandcastle/coach.ts`, `.sandcastle/review-prompt.md`, `.sandcastle/run.ts`, `scripts/test_guard.py` (+1 more) |
 | `scripts/mutation_check.py` | 6 | `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/tune-prompt.md`, `scripts/check.py`, `scripts/test_guard.py` (+1 more) |
