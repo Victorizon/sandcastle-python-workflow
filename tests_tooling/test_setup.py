@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -102,3 +103,55 @@ def test_verify_workflow_ready_offline_json() -> None:
 def test_setup_detects_broken_partial_venv_as_missing_python(tmp_path: Path) -> None:
     (tmp_path / ".venv").mkdir()
     assert setup_mod._venv_python(tmp_path).is_file() is False
+
+
+def test_non_src_notebook_repo_adoption_runs_baselines_and_check_cleanly(tmp_path: Path) -> None:
+    """Regression test for Issue #31: notebook-only / no-src repo with existing tests/."""
+    repo = tmp_path / "notebook_repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "tests").mkdir(parents=True)
+    (repo / "analysis.ipynb").write_text('{"cells": [], "nbformat": 4}\n', encoding="utf-8")
+    (repo / "tests" / "test_notebook_helpers.py").write_text(
+        "def test_basic_math() -> None:\n    assert 2 + 2 == 4\n",
+        encoding="utf-8",
+    )
+    for name in ("check.py", "ratchet.py", "test_guard.py", "test_quality_ast.py"):
+        shutil.copy2(ROOT / "scripts" / name, repo / "scripts" / name)
+    shutil.copy2(ROOT / "pyproject.toml", repo / "pyproject.toml")
+
+    # Initialize git so test_guard.py --base main works
+    for git_args in (
+        ["init", "-b", "main"],
+        ["config", "user.email", "test@example.com"],
+        ["config", "user.name", "Test"],
+    ):
+        subprocess.run(["git", *git_args], cwd=repo, check=True, capture_output=True)
+
+    # Capture baselines without src/
+    init_ratchet = subprocess.run(
+        [sys.executable, "scripts/ratchet.py", "--init"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert init_ratchet.returncode == 0, init_ratchet.stdout + init_ratchet.stderr
+    setup_mod._capture_coverage_baseline(Path(sys.executable), repo)
+    cov_data = json.loads((repo / "scripts" / "coverage-baseline.json").read_text(encoding="utf-8"))
+    assert cov_data == {"min_percent": 0.0}
+
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "adopt"], cwd=repo, check=True, capture_output=True)
+
+    # check.py must pass cleanly without src/ or tests_tooling/
+    check_res = subprocess.run(
+        [sys.executable, "scripts/check.py"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert check_res.returncode == 0, check_res.stdout + check_res.stderr
+    assert "ALL CHECKS PASSED." in check_res.stdout

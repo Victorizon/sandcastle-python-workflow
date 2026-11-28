@@ -257,6 +257,7 @@ def _setup_python_venv(repo_root: Path) -> bool:
         py_bin = _venv_python(repo_root)
     else:
         print("\n==> Create Python .venv\n[PASS] Already exists and healthy (.venv)")
+    editable = ["-e", "."] if (repo_root / "src").is_dir() else []
     if uv_bin:
         return _run_step(
             "Install Python dev dependencies (uv)",
@@ -268,8 +269,7 @@ def _setup_python_venv(repo_root: Path) -> bool:
                 str(py_bin),
                 "-r",
                 "requirements-dev.txt",
-                "-e",
-                ".",
+                *editable,
             ],
             cwd=repo_root,
         )
@@ -279,7 +279,7 @@ def _setup_python_venv(repo_root: Path) -> bool:
         return False
     return _run_step(
         "Install Python dev dependencies (pip)",
-        [str(py_bin), "-m", "pip", "install", "-r", "requirements-dev.txt", "-e", "."],
+        [str(py_bin), "-m", "pip", "install", "-r", "requirements-dev.txt", *editable],
         cwd=repo_root,
     )
 
@@ -344,19 +344,20 @@ def _print_preflight(results: list[CheckResult]) -> bool:
 def _capture_coverage_baseline(py_bin: Path, repo_root: Path) -> None:
     cov_json = repo_root / ".coverage.json"
     baseline_path = repo_root / "scripts" / "coverage-baseline.json"
-    proc = _run_capture(
-        [str(py_bin), "-m", "pytest", "--cov=src", f"--cov-report=json:{cov_json.name}", "-q"],
-        cwd=repo_root,
-    )
     pct = 0.0
-    if proc.returncode == 0 and cov_json.is_file():
-        try:
-            data = json.loads(cov_json.read_text(encoding="utf-8"))
-            pct = round(float(data.get("totals", {}).get("percent_covered", 0.0)), 2)
-        except Exception:
-            pct = 0.0
-    cov_json.unlink(missing_ok=True)
-    baseline_path.write_text(f'{{\n  "min_coverage_percent": {pct}\n}}\n', encoding="utf-8")
+    if (repo_root / "src").is_dir():
+        proc = _run_capture(
+            [str(py_bin), "-m", "pytest", "--cov=src", f"--cov-report=json:{cov_json.name}", "-q"],
+            cwd=repo_root,
+        )
+        if proc.returncode == 0 and cov_json.is_file():
+            try:
+                data = json.loads(cov_json.read_text(encoding="utf-8"))
+                pct = round(float(data.get("totals", {}).get("percent_covered", 0.0)), 2)
+            except Exception:
+                pct = 0.0
+        cov_json.unlink(missing_ok=True)
+    baseline_path.write_text(f'{{\n  "min_percent": {pct}\n}}\n', encoding="utf-8")
     print(f"[PASS] Captured coverage baseline: {pct:.2f}% -> scripts/coverage-baseline.json")
 
 
