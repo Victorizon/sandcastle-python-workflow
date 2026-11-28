@@ -114,7 +114,9 @@ def run_external_analyzers(root: Path = ROOT) -> list[BloatFinding]:
         if vulture_hit:
             findings.append(vulture_hit)
 
-    if (root / ".sandcastle" / "package.json").exists():
+    if (root / ".sandcastle" / "package.json").exists() and (
+        root / ".sandcastle" / "node_modules"
+    ).exists():
         knip_hit = _run_external_gate(
             "knip-ts-dead-code",
             [_resolve_sandcastle_bin(root, "knip"), "--directory", ".sandcastle"],

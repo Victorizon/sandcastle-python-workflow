@@ -29,6 +29,9 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install Sandcastle Node dependencies
+        run: npm --prefix .sandcastle ci
+
       - name: Run full 6-gate verification + tooling self-tests
         run: |
           .venv/bin/python scripts/check.py
@@ -36,7 +39,6 @@ jobs:
 
       - name: Typecheck & test Sandcastle Drift Watchdog
         run: |
-          npm --prefix .sandcastle ci
           npm --prefix .sandcastle run typecheck
           npm --prefix .sandcastle test
 
