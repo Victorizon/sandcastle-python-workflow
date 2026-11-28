@@ -6,7 +6,46 @@ This template installs the **complete, loop-proof Matt Pocock + Sandcastle workf
 
 ---
 
-## Quick One-Command Install (Recommended)
+## Adopt Into an Existing Repo (WSL2 Copy-Paste)
+
+Already have an existing Python repo cloned in WSL2? Set `TARGET` and `TOOLBOX` to your two paths and run these 4 blocks in your WSL2 terminal (never overwrites your `.git/`, `src/`, or existing code):
+
+```bash
+# 1. Set your paths and create a clean adoption branch
+TARGET=~/code/your-existing-repo
+TOOLBOX=~/code/sandcastle-python-workflow
+
+cd "$TARGET"
+git checkout -b chore/adopt-workflow
+```
+
+```bash
+# 2. Copy ONLY the workflow toolbox in (skips existing files, removes template baselines)
+cp -rn "$TOOLBOX/.sandcastle" "$TOOLBOX/scripts" "$TOOLBOX/docs" "$TOOLBOX/.codex" "$TOOLBOX/.github" .
+cp -n "$TOOLBOX/AGENTS.md" "$TOOLBOX/.pre-commit-config.yaml" "$TOOLBOX/requirements-dev.txt" "$TOOLBOX/pyproject.toml" .
+rm -f scripts/ratchet-baseline.json scripts/bloat-baseline.json scripts/coverage-baseline.json
+```
+
+```bash
+# 3. Authenticate Codex, install .venv + Docker image, and freeze Day-1 baselines
+codex login
+python3 scripts/setup.py --init-baselines
+```
+
+```bash
+# 4. Commit the Day-1 baseline and open in VS Code (WSL2 Remote)
+git add -A
+git commit -m "chore: adopt sandcastle workflow with Day-1 baselines"
+code .
+```
+
+> **Next in VS Code (Codex):**
+> - Optional legacy onboarding: `.venv/bin/python scripts/adr_miner.py mine` → run **`$grill-me`** over `docs/adr/drafts/*.md` → approve real ADRs (`python scripts/adr_miner.py approve <draft>`).
+> - Daily shipping loop: `$grill-me` → `$to-spec` → `$to-tickets` → commit tickets → `npm --prefix .sandcastle run factory`.
+
+---
+
+## Quick One-Command Install (Fresh Repo From Template)
 
 Run the idempotent cross-platform installer (uses Python stdlib only — works on Windows, WSL2, macOS, and Linux before `.venv` exists):
 
@@ -19,24 +58,18 @@ python scripts/setup.py
 # Useful flags:
 #   --skip-docker      Skip Docker daemon check & image build
 #   --skip-node        Python-only setup (skip .sandcastle npm install)
-#   --init-baselines   Capture initial ratchet & coverage baselines from an existing repo
+#   --init-baselines   Capture initial ratchet, bloat & coverage baselines from an existing repo
 ```
-
-> **Onboarding an existing repo with legacy quirks?** Run `python scripts/adr_miner.py mine` (with optional `--jira-export <file.json|csv>`), then run a dedicated **`$grill-me` session** over `docs/adr/drafts/*.md` to reconcile nuances before promoting accepted ADRs (`python scripts/adr_miner.py approve <draft>`). Accepted ADRs with `Applies-to:` globs are automatically enforced in code review.
 
 If you prefer manual step-by-step setup, follow Steps 1–4 below.
 
 ---
 
-## Step 1: Clone or Copy Into Your Repo (in WSL2)
+## Step 1: Clone the Template (Fresh Project in WSL2)
 
 ```bash
-# Option A: Start fresh from this template
 git clone https://github.com/<your-user>/sandcastle-python-workflow.git ~/code/my-project
 cd ~/code/my-project
-
-# Option B: Overlay onto an existing Python repo (never overwrites existing files)
-cp -rn /path/to/sandcastle-python-workflow/. .
 ```
 
 Ensure your coding agent harness uses **`mattpocock/skills` v1.3.2** (which fixes Codex subagent context forking) and has **no overlapping/competing third-party TDD or code-review skills** installed.
