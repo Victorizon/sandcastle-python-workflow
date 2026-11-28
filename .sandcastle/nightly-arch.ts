@@ -27,6 +27,7 @@ import { formatEndOfRunFooter } from "./coach.js";
 import { DriftDetectedError, DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
+import { installGracefulShutdown, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 
@@ -226,6 +227,7 @@ async function main(): Promise<void> {
     assertCleanGitWorktree();
   }
   const releaseLock = acquireRunLock(".nightly.lock", "nightly-arch");
+  const uninstallShutdown = installGracefulShutdown(() => releaseLock());
 
   try {
     let gitLogOut = "";
@@ -245,21 +247,18 @@ async function main(): Promise<void> {
       `\n=== Overnight No-Bloat Bot (agent=${agentKind}, mode=${mode}, max=${maxProposals}, cap=${maxMinutes}m) ===`,
     );
 
-    const scoutRun = await sandcastle.run({
-      sandbox: createDockerSandbox(IMAGE_NAME, agentKind),
-      name: "Architecture Scout",
-      agent: createAgent("high", agentKind),
-      promptFile: "./.sandcastle/nightly-arch-prompt.md",
-      promptArgs: {
-        MAX_PROPOSALS: String(maxProposals),
-        HOTSPOTS_SUMMARY: hotspotsText,
-      },
-      output: Output.object({
-        tag: "proposals",
-        schema: ArchProposalsResponseSchema,
-        maxRetries: 2,
-      }),
-    });
+    const scoutRun = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: createDockerSandbox(IMAGE_NAME, agentKind),
+          name: "Architecture Scout",
+          agent: createAgent("high", agentKind),
+          promptFile: "./.sandcastle/nightly-arch-prompt.md",
+          promptArgs: { MAX_PROPOSALS: String(maxProposals), HOTSPOTS_SUMMARY: hotspotsText },
+          output: Output.object({ tag: "proposals", schema: ArchProposalsResponseSchema, maxRetries: 2 }),
+        }),
+      { label: "Architecture Scout" },
+    );
 
     const proposals = scoutRun.output.proposals.slice(0, maxProposals);
     const branchResults: DraftBranchOutcome[] = [];
@@ -466,6 +465,7 @@ async function main(): Promise<void> {
         formatEndOfRunFooter({ kind: "nightly-arch", reportPath: htmlPath }),
     );
   } finally {
+    uninstallShutdown();
     releaseLock();
   }
 }
