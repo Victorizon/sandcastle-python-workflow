@@ -155,3 +155,33 @@ def test_cli_dry_run_and_command_block() -> None:
     assert "jdoe@corp.local" not in dry.stdout
     assert "10.0.0.5" not in dry.stdout
     assert "contains no downstream source code or patches" in dry.stdout
+
+
+def test_trace_summary_is_anonymized_before_inclusion(tmp_path: Path) -> None:
+    runs_dir = tmp_path / ".sandcastle" / "logs" / "runs"
+    runs_dir.mkdir(parents=True)
+    trace_file = runs_dir / "trace-demo.jsonl"
+    trace_file.write_text(
+        '{"cycle":1,"phase":"post_merge_audit","outcome":"rollback","durationMs":1500,'
+        '"detail":"conflict on https://internal.corp.local/repo for jdoe@corp.local"}\n',
+        encoding="utf-8",
+    )
+    (runs_dir / "latest-trace.txt").write_text(f"{trace_file}\n", encoding="utf-8")
+
+    raw_summary = reporter.summarize_latest_trace(tmp_path)
+    assert raw_summary is not None
+    _, body = reporter.build_issue_markdown(
+        reporter.IssueDraftInput(
+            kind="bug",
+            title="Merge audit rollback",
+            summary="Audit rolled back.",
+            repro="",
+            env_info={"os": "Windows 11"},
+            trace_summary=raw_summary,
+        ),
+        reporter.AnonymizeContext(repo_root=tmp_path, username="jdoe"),
+    )
+    assert "## Phase Trace Summary (Anonymized)" in body
+    assert "post_merge_audit" in body
+    assert "internal.corp.local" not in body
+    assert "jdoe@corp.local" not in body
