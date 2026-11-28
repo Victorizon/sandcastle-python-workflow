@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -211,6 +212,15 @@ def run_preflight_checks(
                 "Move repo to Linux ext4 (e.g. ~/code/<repo>) for best performance.",
             )
         )
+    if sys.platform == "win32" and not os.environ.get("HOME"):
+        results.append(
+            CheckResult(
+                "Windows HOME Env",
+                "WARN",
+                "HOME env var is unset (Sandcastle requires HOME on PowerShell)",
+                "Run `$env:HOME = $env:USERPROFILE` in PowerShell before running Sandcastle.",
+            )
+        )
 
     if not skip_node:
         results.append(_check_node_prereq(repo_root))
@@ -234,14 +244,19 @@ def _run_step(label: str, cmd: list[str], cwd: Path = ROOT) -> bool:
 def _setup_python_venv(repo_root: Path) -> bool:
     uv_bin = shutil.which("uv")
     venv_dir = repo_root / ".venv"
-    if not venv_dir.exists():
-        cmd = [uv_bin, "venv", ".venv"] if uv_bin else [sys.executable, "-m", "venv", ".venv"]
-        if not _run_step("Create Python .venv", cmd, cwd=repo_root):
-            return False
-    else:
-        print("\n==> Create Python .venv\n[PASS] Already exists (.venv)")
-
     py_bin = _venv_python(repo_root)
+    if not py_bin.is_file():
+        label = "Recreate broken Python .venv" if venv_dir.exists() else "Create Python .venv"
+        cmd = (
+            [uv_bin, "venv", "--clear", ".venv"]
+            if uv_bin
+            else [sys.executable, "-m", "venv", "--clear", ".venv"]
+        )
+        if not _run_step(label, cmd, cwd=repo_root):
+            return False
+        py_bin = _venv_python(repo_root)
+    else:
+        print("\n==> Create Python .venv\n[PASS] Already exists and healthy (.venv)")
     if uv_bin:
         return _run_step(
             "Install Python dev dependencies (uv)",
@@ -326,6 +341,25 @@ def _print_preflight(results: list[CheckResult]) -> bool:
     return not has_fail
 
 
+def _capture_coverage_baseline(py_bin: Path, repo_root: Path) -> None:
+    cov_json = repo_root / ".coverage.json"
+    baseline_path = repo_root / "scripts" / "coverage-baseline.json"
+    proc = _run_capture(
+        [str(py_bin), "-m", "pytest", "--cov=src", f"--cov-report=json:{cov_json.name}", "-q"],
+        cwd=repo_root,
+    )
+    pct = 0.0
+    if proc.returncode == 0 and cov_json.is_file():
+        try:
+            data = json.loads(cov_json.read_text(encoding="utf-8"))
+            pct = round(float(data.get("totals", {}).get("percent_covered", 0.0)), 2)
+        except Exception:
+            pct = 0.0
+    cov_json.unlink(missing_ok=True)
+    baseline_path.write_text(f'{{\n  "min_coverage_percent": {pct}\n}}\n', encoding="utf-8")
+    print(f"[PASS] Captured coverage baseline: {pct:.2f}% -> scripts/coverage-baseline.json")
+
+
 def _run_install_pipeline(args: argparse.Namespace) -> bool:
     if not (
         _setup_python_venv(ROOT)
@@ -336,10 +370,18 @@ def _run_install_pipeline(args: argparse.Namespace) -> bool:
         return False
 
     py_bin = _venv_python(ROOT)
-    if args.init_baselines and not _run_step(
-        "Initialize ratchet baseline", [str(py_bin), "scripts/ratchet.py", "--init"], cwd=ROOT
-    ):
-        return False
+    if args.init_baselines:
+        if not _run_step(
+            "Initialize ratchet baseline", [str(py_bin), "scripts/ratchet.py", "--init"], cwd=ROOT
+        ):
+            return False
+        _capture_coverage_baseline(py_bin, ROOT)
+        print(
+            "\n[INFO] Baselines initialized for this existing repo. Commit "
+            "`scripts/ratchet-baseline.json` and `scripts/coverage-baseline.json`, "
+            "then run `python scripts/verify_workflow_ready.py`."
+        )
+        return True
 
     verify_cmd = [str(py_bin), "scripts/verify_workflow_ready.py"]
     if args.skip_docker:

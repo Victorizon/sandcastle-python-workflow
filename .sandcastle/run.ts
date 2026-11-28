@@ -731,19 +731,21 @@ async function main(): Promise<void> {
       const preMergeSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
       dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
       const tMerge = performance.now();
-      await sandcastle.run({
-        sandbox: makeDocker(),
-        name: "Merger",
-        branchStrategy: { type: "head" },
-        maxIterations: 4,
-        agent: createAgent("medium"),
-        logging: tracer.sandboxLogging(cycle, "merge"),
-        promptFile: "./.sandcastle/merge-prompt.md",
-        promptArgs: {
-          BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
-          TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
-        },
-      });
+      try {
+        await sandcastle.run({
+          sandbox: makeDocker(), name: "Merger", branchStrategy: { type: "head" }, maxIterations: 4,
+          agent: createAgent("medium"), logging: tracer.sandboxLogging(cycle, "merge"),
+          promptFile: "./.sandcastle/merge-prompt.md",
+          promptArgs: {
+            BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
+            TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
+          },
+        });
+      } catch (mergeErr) {
+        rollbackToCommitClean(preMergeSha);
+        tracer.recordSpan({ cycle, phase: "merge", outcome: "rollback", durationMs: performance.now() - tMerge, detail: `Merger crashed; rolled back to ${preMergeSha.slice(0, 7)}` });
+        throw mergeErr;
+      }
       tracer.recordSpan({ cycle, phase: "merge", outcome: "pass", durationMs: performance.now() - tMerge, detail: readyToMerge.map((t) => t.id).join(", ") });
 
       // Deterministic host-side verification after Merger + optional multi-branch cross-slice audit

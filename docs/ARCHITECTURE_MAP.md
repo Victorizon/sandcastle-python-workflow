@@ -241,7 +241,9 @@ flowchart LR
   n_scripts_check_py --> n_scripts_test_guard_py
   n_scripts_local_tracker_py -.-> n_state_scratch
   n_scripts_ratchet_py -.-> n_scripts_ratchet_baseline_json
+  n_scripts_setup_py -.-> n_scripts_coverage_baseline_json
   n_scripts_setup_py --> n_scripts_local_tracker_py
+  n_scripts_setup_py -.-> n_scripts_ratchet_baseline_json
   n_scripts_setup_py --> n_scripts_ratchet_py
   n_scripts_setup_py --> n_scripts_verify_workflow_ready_py
   n_scripts_test_guard_py --> n_scripts_adversarial_scan_py
@@ -304,9 +306,9 @@ flowchart LR
 | `scripts/ratchet.py` | 10 | `.github/workflows/ratchet-shrink.yml`, `.pre-commit-config.yaml`, `.sandcastle/coach.ts`, `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts` (+5 more) |
 | `.sandcastle/resilience.ts` | 9 | `.sandcastle/bakeoff.ts`, `.sandcastle/coach.ts`, `.sandcastle/goal-core.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts` (+4 more) |
 | `scripts/test_guard.py` | 9 | `.github/workflows/ratchet-shrink.yml`, `.sandcastle/e2e-synthetic.ts`, `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/run.ts` (+4 more) |
+| `scripts/coverage-baseline.json` | 8 | `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/tune-prompt.md`, `.sandcastle/tuner.ts`, `scripts/arch_map.py` (+3 more) |
 | `.sandcastle/agent-factory.ts` | 7 | `.sandcastle/bakeoff.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts`, `.sandcastle/pow-verifier.ts`, `.sandcastle/prior-art.ts` (+2 more) |
 | `scripts/adversarial_scan.py` | 7 | `.github/workflows/ci.yml`, `.sandcastle/coach.ts`, `.sandcastle/review-prompt.md`, `.sandcastle/run.ts`, `scripts/test_guard.py` (+2 more) |
-| `scripts/coverage-baseline.json` | 7 | `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/tune-prompt.md`, `.sandcastle/tuner.ts`, `scripts/arch_map.py` (+2 more) |
 | `.sandcastle/confidence.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/goal.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/pm-report.ts` | 6 | `.sandcastle/bakeoff.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/run-history.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/confidence.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
