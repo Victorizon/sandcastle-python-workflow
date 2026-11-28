@@ -77,6 +77,7 @@ def check_layer_3() -> tuple[bool, str]:
             "scripts/adversarial_scan.py",
             "scripts/venv_run.py",
             "scripts/setup.py",
+            "scripts/upstream_report.py",
             "scripts/check.py",
             "LEGACY_REFACTORING_PLAYBOOK.md",
         ]

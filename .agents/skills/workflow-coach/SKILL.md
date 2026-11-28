@@ -29,6 +29,7 @@ Match the user's current goal to the right tool from `docs/WORKFLOW_GUIDE.html`:
      - `Supervised Only` / `Factory Ready (Level 1)` -> recommend `npm --prefix .sandcastle run factory`.
      - `Goal Autonomy Ready (Level 2)` -> recommend `npm --prefix .sandcastle run goal -- --goal .sandcastle/goal.json --max-minutes 0`.
 - **Tech debt & churn cleanup:** Suggest `npm --prefix .sandcastle run nightly-arch -- --mode tickets` (1–2 churn-scoped proposals overnight).
+- **Workflow bug or harness improvement worth sharing upstream:** Recommend `python scripts/upstream_report.py --kind bug|improvement --title "..." --summary "..."` (issue description only — NEVER exports work code, auto-anonymizes PII/paths/tokens + `.sandcastle/redact-terms.local.txt`, defaults to dry-run preview, and requires explicit human `PUBLISH` confirmation).
 - **10+ verified runs on disk:** Remind them that `npm --prefix .sandcastle run tune` is unlocked to propose safety-clamped parameter improvements.
 
 ## Tone & Rules
