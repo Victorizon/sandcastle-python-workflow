@@ -1,13 +1,16 @@
 FROM node:22-bookworm
 
-# System + Python dependencies
+# System + Python dependencies + fast code-search binaries (rg, fd)
 RUN apt-get update && apt-get install -y \
   git \
   curl \
   jq \
+  ripgrep \
+  fd-find \
   python3 \
   python3-venv \
   python3-pip \
+  && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
   && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI (ready for local -> GitHub switchover)
@@ -18,8 +21,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
   && apt-get update && apt-get install -y gh \
   && rm -rf /var/lib/apt/lists/*
 
-# Install Codex CLI and Claude Code CLI globally so `agent` user can run either provider
-RUN npm install -g @openai/codex @anthropic-ai/claude-code
+# Install Codex CLI, Claude Code CLI, and ast-grep (structural AST search/refactor) globally
+RUN npm install -g @openai/codex @anthropic-ai/claude-code @ast-grep/cli
 
 # Pre-bake Python dev toolchain into /opt/venv so containers start in <1s without per-run pip installs
 RUN python3 -m venv /opt/venv \
@@ -29,6 +32,8 @@ RUN python3 -m venv /opt/venv \
        "pyright>=1.1.390" \
        "pytest>=8.3.0" \
        "pytest-cov>=6.0.0" \
+       "pytest-testmon>=2.1" \
+       "pytest-xdist>=3.6" \
        "hypothesis>=6.120.0" \
        "import-linter>=2.1" \
        "vulture>=2.14"
