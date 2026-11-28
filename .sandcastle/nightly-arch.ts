@@ -164,7 +164,7 @@ export function renderNightlyArchReport(
   return lines.join("\n") + "\n";
 }
 
-function parseCliArgs(argv: readonly string[]): {
+export function parseCliArgs(argv: readonly string[]): {
   readonly maxProposals: number;
   readonly maxMinutes: number;
   readonly mode: "tickets" | "draft-branch";
@@ -181,10 +181,16 @@ function parseCliArgs(argv: readonly string[]): {
     const arg = argv[i];
     const next = argv[i + 1];
     if (arg === "--max" && next) {
-      maxProposals = Math.min(3, Math.max(1, Number(next)));
+      const parsed = Number(next);
+      if (Number.isFinite(parsed)) {
+        maxProposals = Math.min(3, Math.max(1, Math.trunc(parsed)));
+      }
       i += 1;
     } else if (arg === "--max-minutes" && next) {
-      maxMinutes = Math.min(280, Math.max(15, Number(next)));
+      const parsed = Number(next);
+      if (Number.isFinite(parsed)) {
+        maxMinutes = Math.min(280, Math.max(15, parsed));
+      }
       i += 1;
     } else if (arg === "--mode" && (next === "tickets" || next === "draft-branch")) {
       mode = next;

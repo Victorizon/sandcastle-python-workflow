@@ -39,16 +39,30 @@ export interface DriftConfig {
   readonly maxContextTokens: number;
 }
 
+export function parsePositiveEnvNumber(
+  raw: string | undefined,
+  fallback: number,
+  allowZero = false,
+): number {
+  if (raw === undefined) return fallback;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return fallback;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (allowZero ? parsed < 0 : parsed <= 0) return fallback;
+  return parsed;
+}
+
 export const DEFAULT_DRIFT_CONFIG: DriftConfig = {
-  maxTicketMs: Number(process.env["DRIFT_MAX_MINUTES"] ?? "20") * 60_000,
-  maxToolCalls: Number(process.env["DRIFT_MAX_TOOL_CALLS"] ?? "45"),
-  maxRepeatedToolCalls: Number(process.env["DRIFT_MAX_REPEATED_TOOLS"] ?? "6"),
-  maxOscillationCycles: Number(process.env["DRIFT_MAX_OSCILLATION_CYCLES"] ?? "3"),
-  maxDiffLines: Number(process.env["DRIFT_MAX_DIFF_LINES"] ?? "400"),
-  maxDiffFiles: Number(process.env["DRIFT_MAX_DIFF_FILES"] ?? "6"),
-  maxContextRatio: Number(process.env["DRIFT_MAX_CONTEXT_RATIO"] ?? "0.78"),
+  maxTicketMs: parsePositiveEnvNumber(process.env["DRIFT_MAX_MINUTES"], 20) * 60_000,
+  maxToolCalls: parsePositiveEnvNumber(process.env["DRIFT_MAX_TOOL_CALLS"], 45),
+  maxRepeatedToolCalls: parsePositiveEnvNumber(process.env["DRIFT_MAX_REPEATED_TOOLS"], 6),
+  maxOscillationCycles: parsePositiveEnvNumber(process.env["DRIFT_MAX_OSCILLATION_CYCLES"], 3),
+  maxDiffLines: parsePositiveEnvNumber(process.env["DRIFT_MAX_DIFF_LINES"], 400),
+  maxDiffFiles: parsePositiveEnvNumber(process.env["DRIFT_MAX_DIFF_FILES"], 6),
+  maxContextRatio: parsePositiveEnvNumber(process.env["DRIFT_MAX_CONTEXT_RATIO"], 0.78),
   /** Hard absolute "smart zone" token ceiling (default 130,000 tokens). */
-  maxContextTokens: Number(process.env["DRIFT_MAX_CONTEXT_TOKENS"] ?? "130000"),
+  maxContextTokens: parsePositiveEnvNumber(process.env["DRIFT_MAX_CONTEXT_TOKENS"], 130_000, true),
 };
 
 export interface PostRunMetrics {

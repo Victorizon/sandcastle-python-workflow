@@ -47,6 +47,10 @@ def _parse_blockers(raw: str, feature: str) -> list[str]:
         cleaned = token.strip()
         if not cleaned:
             continue
+        qualified = re.search(r"([A-Za-z0-9._-]+)/(\d+)\b", cleaned)
+        if qualified:
+            blockers.append(f"{qualified.group(1)}/{int(qualified.group(2)):02d}")
+            continue
         match = re.search(r"\b(\d+)\b", cleaned)
         if match:
             blockers.append(f"{feature}/{int(match.group(1)):02d}")
