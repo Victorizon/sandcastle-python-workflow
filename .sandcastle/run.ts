@@ -22,6 +22,7 @@ import {
 } from "./preflight.js";
 import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
 import { RunTracer } from "./diagnostics.js";
+import { formatPowEvidenceForReviewer, runMergeProofOfWork, runSliceProofOfWork } from "./pow-verifier.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = resolvePythonBin();
@@ -335,8 +336,7 @@ async function runFreshFixContainer(params: {
 }
 
 async function processTicket(
-  ticket: PlannedTicket,
-  dashboard: PMDashboard,
+  ticket: PlannedTicket, dashboard: PMDashboard, cycle: number, tracer: RunTracer,
 ): Promise<{ approved: boolean; decomposed: boolean }> {
   const startedAtMs = Date.now();
   mkdirSync(".sandcastle/logs", { recursive: true });
@@ -528,7 +528,8 @@ async function processTicket(
     return { approved: false, decomposed: false };
   }
 
-  // Phase C: Fresh-context Adversarial Reviewer in a clean container per round
+  // Phase C: Proof-of-Work Verifier + Fresh-context Adversarial Reviewer in clean containers
+  const powVerdict = await runSliceProofOfWork({ imageName: IMAGE_NAME, ticket, cycle, tracer });
   for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
     dashboard.upsertSlice(ticket.id, {
       stage: "reviewing",
@@ -539,10 +540,7 @@ async function processTicket(
     let postCheckExit = 1;
     let postCheckOut = "";
     {
-      await using reviewSandbox = await sandcastle.createSandbox({
-        sandbox: makeDocker(),
-        branch: ticket.branch,
-      });
+      await using reviewSandbox = await sandcastle.createSandbox({ sandbox: makeDocker(), branch: ticket.branch });
       const review = await reviewSandbox.run({
         name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
         agent: createAgent("high"),
@@ -551,6 +549,7 @@ async function processTicket(
           TICKET_ID: ticket.id,
           TICKET_TITLE: ticket.title,
           BRANCH: ticket.branch,
+          POW_EVIDENCE: formatPowEvidenceForReviewer(powVerdict),
         },
         maxIterations: 1,
       });
@@ -698,7 +697,7 @@ async function main(): Promise<void> {
         tickets.map(async (ticket) => {
           await acquire();
           try {
-            return await processTicket(ticket, dashboard);
+            return await processTicket(ticket, dashboard, cycle, tracer);
           } finally {
             release();
           }
@@ -761,6 +760,7 @@ async function main(): Promise<void> {
 
       let multiMergeConflictIssue: string | null = null;
       if (hostCheckPassed && readyToMerge.length >= 2) {
+        const mergePow = await runMergeProofOfWork({ imageName: IMAGE_NAME, preMergeSha, tickets: readyToMerge, cycle, tracer });
         const tAudit = performance.now();
         const mergeReview = await withTransientRetry(
           () =>
@@ -772,6 +772,7 @@ async function main(): Promise<void> {
               prompt: [
                 `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
                 ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
+                `Cross-Slice Proof-of-Work Evidence:\n${formatPowEvidenceForReviewer(mergePow)}`,
                 `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
                 `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
                 `Then output <promise>COMPLETE</promise>.`,
