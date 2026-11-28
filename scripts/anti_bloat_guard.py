@@ -95,7 +95,15 @@ def check_oversized_files(
 
 
 def _run_external_gate(label: str, cmd: list[str], cwd: Path) -> BloatFinding | None:
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if proc.returncode == 0:
         return None
     tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[:8])

@@ -23,6 +23,8 @@ def _current_branch(root: Path) -> str:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return proc.stdout.strip() if proc.returncode == 0 else ""
@@ -34,6 +36,8 @@ def _git_dir(root: Path) -> Path:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     raw = proc.stdout.strip() if proc.returncode == 0 else ".git"
@@ -47,6 +51,8 @@ def _staged_files(root: Path) -> list[str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode != 0:

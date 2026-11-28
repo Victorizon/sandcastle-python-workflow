@@ -50,7 +50,15 @@ def _run_gitleaks(root: Path, base_ref: str) -> tuple[str, bool, str]:
             ]
         )
     for cmd in checks:
-        proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd,
+            cwd=root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         if proc.returncode != 0:
             tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[:8])
             return ("gitleaks", False, tail or f"exited {proc.returncode}")
@@ -139,6 +147,8 @@ def _run_opengrep(root: Path) -> tuple[str, bool, str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode == 0:
@@ -164,6 +174,8 @@ def _run_crosshair(root: Path) -> tuple[str, bool, str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode == 0:

@@ -119,6 +119,8 @@ def _run_pytest_in(workdir: Path) -> int:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return proc.returncode
@@ -142,6 +144,8 @@ def _changed_processor_files(root: Path, base_ref: str) -> list[Path]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if diff_proc.returncode == 0:
@@ -152,6 +156,8 @@ def _changed_processor_files(root: Path, base_ref: str) -> list[Path]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if status_proc.returncode == 0:

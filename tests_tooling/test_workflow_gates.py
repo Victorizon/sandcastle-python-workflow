@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -632,3 +633,30 @@ def test_local_tracker_parses_numeric_feature_slug_and_cross_feature_blockers(
         "2026-q4-rollout/01",
         "workflow-smoke-test/01",
     ]
+
+
+def test_test_guard_reads_utf8_locked_files_without_locale_false_positives(
+    tmp_path: Path,
+) -> None:
+    repo = _init_temp_git_repo(tmp_path)
+    # Run test_guard with PYTHONUTF8=0 on a clean clone containing UTF-8 em-dashes
+    env = {**os.environ, "PYTHONUTF8": "0"}
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "test_guard.py"),
+            "--root",
+            str(repo),
+            "--base",
+            "main",
+        ],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert "Test Guard PASS" in res.stdout

@@ -111,6 +111,8 @@ def _collect_ruff() -> list[Violation]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode not in (0, 1):
@@ -133,6 +135,8 @@ def _collect_pyright() -> list[Violation]:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if not proc.stdout.strip():
@@ -242,6 +246,8 @@ def read_origin_main_baseline() -> Counts | None:
         cwd=ROOT,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode != 0 or not proc.stdout.strip():

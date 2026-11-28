@@ -185,6 +185,8 @@ def _git_ref_exists(root: Path, ref: str) -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return proc.returncode == 0
@@ -205,6 +207,8 @@ def _git_list_files(root: Path, ref: str, prefix: str) -> list[str]:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if proc.returncode != 0:
@@ -218,6 +222,8 @@ def _git_show_file(root: Path, ref: str, rel_path: str) -> str | None:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return proc.stdout if proc.returncode == 0 else None
