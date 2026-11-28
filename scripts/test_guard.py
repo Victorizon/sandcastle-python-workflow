@@ -49,6 +49,7 @@ HARNESS_LOCKED_FILES: tuple[str, ...] = (
     "scripts/anti_bloat_guard.py",
     "scripts/coverage-baseline.json",
     "scripts/ratchet-baseline.json",
+    "scripts/bloat-baseline.json",
     ".sandcastle/adversarial-rules.yml",
     ".sandcastle/knip.json",
     "pyproject.toml",

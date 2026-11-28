@@ -245,9 +245,9 @@ flowchart LR
   n_scripts_local_tracker_py -.-> n_state_scratch
   n_scripts_ratchet_py -.-> n_scripts_ratchet_baseline_json
   n_scripts_setup_py --> n_scripts_adr_miner_py
+  n_scripts_setup_py --> n_scripts_anti_bloat_guard_py
   n_scripts_setup_py -.-> n_scripts_coverage_baseline_json
   n_scripts_setup_py --> n_scripts_local_tracker_py
-  n_scripts_setup_py -.-> n_scripts_ratchet_baseline_json
   n_scripts_setup_py --> n_scripts_ratchet_py
   n_scripts_setup_py --> n_scripts_verify_workflow_ready_py
   n_scripts_test_guard_py --> n_scripts_adversarial_scan_py
@@ -317,4 +317,4 @@ flowchart LR
 | `.sandcastle/confidence.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/goal.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/pm-report.ts` | 6 | `.sandcastle/bakeoff.ts`, `.sandcastle/goal.ts`, `.sandcastle/nightly-arch.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
 | `.sandcastle/run-history.ts` | 6 | `.sandcastle/coach.ts`, `.sandcastle/confidence.ts`, `.sandcastle/rate.ts`, `.sandcastle/run.ts`, `.sandcastle/trust.ts` (+1 more) |
-| `scripts/mutation_check.py` | 6 | `.sandcastle/nightly-arch-prompt.md`, `.sandcastle/nightly-arch.ts`, `.sandcastle/tune-prompt.md`, `scripts/check.py`, `scripts/test_guard.py` (+1 more) |
+| `scripts/anti_bloat_guard.py` | 6 | `.github/workflows/ci.yml`, `.sandcastle/coach.ts`, `scripts/setup.py`, `scripts/test_guard.py`, `scripts/upstream_report.py` (+1 more) |
