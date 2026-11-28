@@ -40,8 +40,6 @@ export const GapPlanSchema = z.object({
     .max(2),
 });
 
-export type GapPlan = z.infer<typeof GapPlanSchema>;
-
 export interface CommandCheckResult {
   readonly command: string;
   readonly passed: boolean;

@@ -5,3 +5,4 @@ pytest-cov>=6.0.0
 hypothesis>=6.120.0
 import-linter>=2.1
 pre-commit>=4.0.0
+vulture>=2.14

@@ -1,0 +1,4 @@
+{
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": ["jscpd"]
+}
