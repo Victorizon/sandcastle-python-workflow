@@ -22,6 +22,12 @@ Perform a fresh-context two-axis adversarial code review of branch `{{BRANCH}}` 
 
 </diff-to-main>
 
+<adversarial-scan-report>
+
+!`python scripts/adversarial_scan.py --base main`
+
+</adversarial-scan-report>
+
 # REVIEW AXES
 
 1. **Standards axis:** Check every hunk against `CODING_STANDARDS.md` (fail-closed invariants, PII/secret redaction, external adapter boundary, public-seam testing, no deleted/weakened tests, and Fowler smells).
