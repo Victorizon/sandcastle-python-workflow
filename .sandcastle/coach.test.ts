@@ -5,6 +5,7 @@ import {
   buildCoachNudges,
   formatCoachOutput,
   formatEndOfRunFooter,
+  pickContextualTip,
 } from "./coach.js";
 
 function baseSignals(overrides: Partial<WorkspaceCoachSignals> = {}): WorkspaceCoachSignals {
@@ -97,4 +98,16 @@ test("Shadow Guide matches ready ticket recommendation to earned Level 2 Autonom
   assert.ok(footer.includes("Shadow Guide"));
   assert.ok(footer.includes("goal-demo-2026-11-28.html"));
   assert.ok(footer.includes("run rate"));
+});
+
+test("pickContextualTip matches concise loading-screen tips to prompt context and rotates by default", () => {
+  assert.match(pickContextualTip("hit a weird merge timing bug"), /diagnose|upstream_report/u);
+  assert.match(pickContextualTip("onboarding a new work laptop setup"), /setup\.py/u);
+  assert.match(pickContextualTip("check for bloat and dead code"), /anti_bloat_guard/u);
+  assert.match(pickContextualTip("planning 100 slices backlog"), /SANDCASTLE_MAX_CYCLES/u);
+
+  const tip0 = pickContextualTip(undefined, 0);
+  const tip1 = pickContextualTip(undefined, 1);
+  assert.notEqual(tip0, tip1);
+  assert.ok(tip0.length < 220, "Loading-screen tip should stay concise and non-overbearing");
 });

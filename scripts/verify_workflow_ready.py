@@ -228,6 +228,8 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             ".sandcastle/preflight.ts",
             ".sandcastle/resilience.ts",
             ".sandcastle/resilience.test.ts",
+            ".sandcastle/diagnostics.ts",
+            ".sandcastle/diagnostics.test.ts",
             ".sandcastle/prior-art.ts",
             ".sandcastle/prior-art.test.ts",
             ".sandcastle/drift-watchdog.ts",

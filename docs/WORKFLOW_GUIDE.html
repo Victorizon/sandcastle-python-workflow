@@ -599,6 +599,14 @@
           <div class="cmd-row"><code>python scripts/verify_workflow_ready.py</code><button class="copy-btn" type="button">Copy</button></div>
         </div>
         <div class="cheat-item">
+          <div class="cheat-goal">One-command prerequisite doctor &amp; idempotent setup</div>
+          <div class="cmd-row"><code>python scripts/setup.py --check-only</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
+          <div class="cheat-goal">Post-Run Autopsy (phase timings, faults &amp; Merger/Auditor verdicts)</div>
+          <div class="cmd-row"><code>npm --prefix .sandcastle run diagnose</code><button class="copy-btn" type="button">Copy</button></div>
+        </div>
+        <div class="cheat-item">
           <div class="cheat-goal">Draft an anonymized upstream bug/improvement issue (no work code)</div>
           <div class="cmd-row"><code>python scripts/upstream_report.py --kind bug --title "..." --summary "..."</code><button class="copy-btn" type="button">Copy</button></div>
         </div>
@@ -1176,6 +1184,58 @@
             <div class="file-pills">
               <span class="file-pill">scripts/upstream_report.py</span>
               <span class="file-pill">tests_tooling/test_upstream_report.py</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 17. ONE-COMMAND INSTALLER & POST-RUN DIAGNOSTICS -->
+      <article class="card" data-cat="daily" data-search="setup install doctor diagnose trace verbose timings autopsy continuity resilience">
+        <div class="card-top">
+          <span class="tag daily">Onboarding &amp; Observability</span>
+          <span class="when">First-time setup &amp; after any multi-slice factory run</span>
+        </div>
+        <h3>17. One-Command Installer, Continuity Resilience &amp; Post-Run Autopsy</h3>
+        <p class="plain">Bootstrap any Windows, WSL2, macOS, or Linux machine with one stdlib command, recover automatically from transient 429/network blips or rollbacks, and inspect per-phase timings + Merger/Auditor verdicts in 5 seconds.</p>
+        <div class="cmd-row"><code>python scripts/setup.py &amp;&amp; npm --prefix .sandcastle run diagnose</code><button class="copy-btn" type="button">Copy</button></div>
+        <details>
+          <summary>Technical Details — Setup Doctor, Continuity Guards &amp; Zero-Dep Phase Tracer</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Idempotent Setup (<code>scripts/setup.py</code>):</strong> Runs before <code>.venv</code> exists; validates Python &ge; 3.11, Node &ge; 20, Git, Docker, WSL2 path, and Codex/Claude auth; wires cross-platform <code>venv_run.py</code> hooks and Docker image build.</li>
+              <li><strong>Continuity Pack (<code>.sandcastle/resilience.ts</code> &amp; <code>preflight.ts</code>):</strong> Shared <code>REPO_MUTATION_LOCK</code>, clean <code>commitScratchState</code> on escalations, <code>rollbackToCommitClean</code>, auto <code>git worktree prune</code>, and jittered retries across read-only LLM calls.</li>
+              <li><strong>Zero-Dep Phase Tracer (<code>.sandcastle/diagnostics.ts</code>):</strong> Logs per-phase JSONL spans + verbatim <code>SANDCASTLE_VERBOSE=1</code> logs; <code>diagnose</code> prints timings, anomalies, and Merger/Post-Merge Auditor verdicts.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">scripts/setup.py</span>
+              <span class="file-pill">.sandcastle/diagnostics.ts</span>
+              <span class="file-pill">.sandcastle/resilience.ts</span>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- 18. ANTI-BLOAT, ADVERSARIAL SCAN WEAPONS & PRIOR-ART GATE -->
+      <article class="card" data-cat="safety" data-search="anti bloat vulture knip jscpd adversarial scan gitleaks opengrep diff-cover crosshair prior art scale 100">
+        <div class="card-top">
+          <span class="tag safety">Hard CI &amp; Container Gates</span>
+          <span class="when">Automatically enforced on every PR &amp; container merge</span>
+        </div>
+        <h3>18. Hybrid Anti-Bloat Guard, Adversarial Scan Weapons &amp; Prior-Art Gate</h3>
+        <p class="plain">Prevents dead code, copy-paste bloat, leaked secrets, uncovered diffs, and reinventing wheels — hard-enforced in CI, Docker post-review, and host post-merge verification.</p>
+        <div class="cmd-row"><code>python scripts/anti_bloat_guard.py --full &amp;&amp; python scripts/adversarial_scan.py --base main</code><button class="copy-btn" type="button">Copy</button></div>
+        <details>
+          <summary>Technical Details — Anti-Bloat, Pack 1–3 Weapons &amp; 100-Slice Scale</summary>
+          <div class="tech-body">
+            <ul>
+              <li><strong>Hybrid Anti-Bloat (<code>scripts/anti_bloat_guard.py</code>):</strong> Monotonic file-size caps + <code>vulture</code> (Python dead code) + <code>knip</code> (TS dead exports) + <code>jscpd</code> (copy-paste detector).</li>
+              <li><strong>Hard Adversarial Scan (<code>scripts/adversarial_scan.py</code>):</strong> <code>gitleaks</code> (secrets) + <code>opengrep</code> (custom SAST rules) + <code>diff-cover</code> (100% changed-line coverage) + <code>CrossHair</code> (Z3 symbolic verification).</li>
+              <li><strong>Prior-Art Gate &amp; 100-Slice Scale:</strong> Bounded 4-tier research (<code>.sandcastle/prior-art.ts</code>) compressed to a &le;30-line Decision Card, plus numeric ticket sort, <code>--summary-only --limit 15</code> Planner bounds, and <code>SANDCASTLE_MAX_CYCLES</code>.</li>
+            </ul>
+            <div class="file-pills">
+              <span class="file-pill">scripts/anti_bloat_guard.py</span>
+              <span class="file-pill">scripts/adversarial_scan.py</span>
+              <span class="file-pill">.sandcastle/prior-art.ts</span>
             </div>
           </div>
         </details>
