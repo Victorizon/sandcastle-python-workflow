@@ -24,6 +24,13 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Install Codex CLI, Claude Code CLI, and ast-grep (structural AST search/refactor) globally
 RUN npm install -g @openai/codex @anthropic-ai/claude-code @ast-grep/cli
 
+# Install fast adversarial security & SAST binaries (gitleaks + opengrep)
+RUN curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+  | tar -xz -C /usr/local/bin gitleaks \
+  && curl -fsSL https://github.com/opengrep/opengrep/releases/download/v2.1.0/opengrep_linux_x86 \
+     -o /usr/local/bin/opengrep \
+  && chmod +x /usr/local/bin/gitleaks /usr/local/bin/opengrep
+
 # Pre-bake Python dev toolchain into /opt/venv so containers start in <1s without per-run pip installs
 RUN python3 -m venv /opt/venv \
   && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
@@ -34,6 +41,7 @@ RUN python3 -m venv /opt/venv \
        "pytest-cov>=6.0.0" \
        "pytest-testmon>=2.1" \
        "pytest-xdist>=3.6" \
+       "diff-cover>=9.2" \
        "hypothesis>=6.120.0" \
        "import-linter>=2.1" \
        "vulture>=2.14"
@@ -43,7 +51,7 @@ ENV PYTHONPATH="/home/agent/workspace/src"
 ENV MUTATION_WORKERS="2"
 
 # Ensure both login shells (`bash -lc`) and non-login shells find /opt/venv tools
-RUN for bin in python python3 pip ruff pyright pytest lint-imports vulture; do \
+RUN for bin in python python3 pip ruff pyright pytest lint-imports vulture diff-cover; do \
       ln -sf "/opt/venv/bin/$bin" "/usr/local/bin/$bin"; \
     done \
   && echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/opt-venv.sh

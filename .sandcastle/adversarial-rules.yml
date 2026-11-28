@@ -1,0 +1,38 @@
+rules:
+  - id: fail-open-auto-approve-in-except
+    languages: [python]
+    severity: ERROR
+    message: "Fail-closed violation (ADR-0002): exception handler must never return AUTO_APPROVE or auto_execute=True."
+    patterns:
+      - pattern-inside: |
+          try:
+            ...
+          except ...:
+            ...
+      - pattern-either:
+          - pattern: Decision.AUTO_APPROVE
+          - pattern: auto_execute=True
+
+  - id: python-shell-injection-in-src
+    languages: [python]
+    severity: ERROR
+    message: "Avoid shell=True or os.system in production code; pass explicit argv lists."
+    paths:
+      include:
+        - "src/**"
+    pattern-either:
+      - pattern: subprocess.$FUNC(..., shell=True, ...)
+      - pattern: os.system(...)
+
+  - id: ts-unsafe-shell-exec
+    languages: [typescript]
+    severity: ERROR
+    message: "Use execFile/execFileSync with explicit argv arrays instead of shell-interpolated exec/execSync."
+    paths:
+      include:
+        - ".sandcastle/**"
+      exclude:
+        - "*.test.ts"
+    pattern-either:
+      - pattern: exec(`...`)
+      - pattern: execSync(`...`)
