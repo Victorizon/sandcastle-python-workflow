@@ -27,21 +27,34 @@ def _resolve_py_tool(name: str) -> str | None:
     return shutil.which(name)
 
 
-def _run_gitleaks(root: Path) -> tuple[str, bool, str]:
+def _run_gitleaks(root: Path, base_ref: str) -> tuple[str, bool, str]:
     gitleaks = shutil.which("gitleaks")
     if gitleaks is None:
         return ("gitleaks", True, "skipped (binary not installed on host; pre-baked in Docker)")
-    proc = subprocess.run(
-        [gitleaks, "detect", "--no-banner", "--redact", "--source", str(root)],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode == 0:
-        return ("gitleaks", True, "0 secrets detected")
-    tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[:8])
-    return ("gitleaks", False, tail or f"exited {proc.returncode}")
+    resolved_base = _resolve_base_ref(root, base_ref)
+    checks: list[list[str]] = [
+        [gitleaks, "detect", "--no-git", "--no-banner", "--redact", "--source", str(root / folder)]
+        for folder in ("src", "tests", "scripts")
+        if (root / folder).exists()
+    ]
+    if resolved_base is not None:
+        checks.append(
+            [
+                gitleaks,
+                "detect",
+                "--no-banner",
+                "--redact",
+                "--source",
+                str(root),
+                f"--log-opts={resolved_base}..HEAD",
+            ]
+        )
+    for cmd in checks:
+        proc = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            tail = "\n".join((proc.stdout + "\n" + proc.stderr).strip().splitlines()[:8])
+            return ("gitleaks", False, tail or f"exited {proc.returncode}")
+    return ("gitleaks", True, "0 secrets detected (src/tests/scripts + branch commits)")
 
 
 def _resolve_base_ref(root: Path, base_ref: str) -> str | None:
@@ -165,10 +178,15 @@ def main() -> int:
     parser.add_argument(
         "--base", default="main", help="Git base ref for diff-cover (default: main)"
     )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Always exit 0 after printing findings (for Sandcastle prompt macro injection)",
+    )
     args = parser.parse_args()
 
     results = [
-        _run_gitleaks(args.root),
+        _run_gitleaks(args.root, args.base),
         _run_diff_cover(args.root, args.base),
         _run_opengrep(args.root),
         _run_crosshair(args.root),
@@ -181,6 +199,8 @@ def main() -> int:
         print(f"{tag} {name}: {detail}")
         if not ok:
             failed = True
+    if args.report_only:
+        return 0
     return 1 if failed else 0
 
 

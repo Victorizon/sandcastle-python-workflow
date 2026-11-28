@@ -119,6 +119,9 @@ test("parseGitNumstat sums files, raw lines, and blast-radius weighted lines cle
   assert.deepEqual(parsed, { files: 4, lines: 160, weightedLines: 75 });
   assert.equal(classifyDiffWeight("src/app/processors/order_triage.py"), 1.0);
   assert.equal(classifyDiffWeight(".sandcastle/confidence.ts"), 0.6);
+  assert.equal(classifyDiffWeight(".sandcastle/review-prompt.md"), 0.6);
+  assert.equal(classifyDiffWeight("AGENTS.md"), 0.6);
+  assert.equal(classifyDiffWeight("tests/old.py => src/new.py"), 1.0);
   assert.equal(classifyDiffWeight(".sandcastle/confidence.test.ts"), 0);
   assert.equal(classifyDiffWeight("tests_tooling/test_anti_bloat_guard.py"), 0);
 });

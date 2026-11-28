@@ -8,10 +8,13 @@ rules:
           try:
             ...
           except ...:
-            ...
-      - pattern-either:
-          - pattern: Decision.AUTO_APPROVE
-          - pattern: auto_execute=True
+            $...HANDLER
+      - metavariable-pattern:
+          metavariable: $...HANDLER
+          patterns:
+            - pattern-either:
+                - pattern: Decision.AUTO_APPROVE
+                - pattern: auto_execute=True
 
   - id: python-shell-injection-in-src
     languages: [python]
