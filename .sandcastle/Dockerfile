@@ -30,14 +30,15 @@ RUN python3 -m venv /opt/venv \
        "pytest>=8.3.0" \
        "pytest-cov>=6.0.0" \
        "hypothesis>=6.120.0" \
-       "import-linter>=2.1"
+       "import-linter>=2.1" \
+       "vulture>=2.14"
 
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONPATH="/home/agent/workspace/src"
 ENV MUTATION_WORKERS="2"
 
 # Ensure both login shells (`bash -lc`) and non-login shells find /opt/venv tools
-RUN for bin in python python3 pip ruff pyright pytest lint-imports; do \
+RUN for bin in python python3 pip ruff pyright pytest lint-imports vulture; do \
       ln -sf "/opt/venv/bin/$bin" "/usr/local/bin/$bin"; \
     done \
   && echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/opt-venv.sh

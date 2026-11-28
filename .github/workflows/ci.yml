@@ -39,3 +39,7 @@ jobs:
           npm --prefix .sandcastle ci
           npm --prefix .sandcastle run typecheck
           npm --prefix .sandcastle test
+
+      - name: Run Hybrid Anti-Bloat Guard (file-size ratchet + vulture + knip + jscpd)
+        run: |
+          .venv/bin/python scripts/anti_bloat_guard.py --full

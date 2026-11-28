@@ -1,4 +1,4 @@
-"""Unit tests for the deterministic Anti-Bloat Guard (`scripts/anti_bloat_guard.py`)."""
+"""Unit tests for the hybrid Anti-Bloat Guard (`scripts/anti_bloat_guard.py`)."""
 
 from __future__ import annotations
 
@@ -18,42 +18,15 @@ def _run_guard(repo: Path, extra_args: list[str] | None = None) -> subprocess.Co
     return subprocess.run(cmd, cwd=repo, capture_output=True, text=True, check=False)
 
 
-def _seed_clean_workspace(tmp_path: Path) -> Path:
-    repo = tmp_path / "repo"
-    (repo / "scripts").mkdir(parents=True)
-    (repo / ".sandcastle").mkdir(parents=True)
-    (repo / "scripts" / "helper.py").write_text(
-        "def compute_total(x: int, y: int) -> int:\n"
-        "    return x + y\n\n"
-        "def main() -> int:\n"
-        "    print(compute_total(1, 2))\n"
-        "    return 0\n",
-        encoding="utf-8",
-    )
-    (repo / ".sandcastle" / "runner.ts").write_text(
-        "function formatLabel(name: string): string {\n"
-        "  return name.trim().toUpperCase();\n"
-        "}\n"
-        "export function runTask(name: string): string {\n"
-        "  return formatLabel(name);\n"
-        "}\n",
-        encoding="utf-8",
-    )
-    (repo / ".sandcastle" / "runner.test.ts").write_text(
-        'import { runTask } from "./runner.js";\nconsole.log(runTask("ok"));\n',
-        encoding="utf-8",
-    )
-    return repo
-
-
-def test_anti_bloat_guard_passes_on_real_repo() -> None:
-    res = _run_guard(ROOT)
+def test_anti_bloat_guard_full_passes_on_real_repo() -> None:
+    res = _run_guard(ROOT, ["--full"])
     assert res.returncode == 0, res.stdout + res.stderr
     assert "Anti-Bloat Guard PASS" in res.stdout
 
 
 def test_anti_bloat_guard_flags_oversized_files(tmp_path: Path) -> None:
-    repo = _seed_clean_workspace(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
     big_file = repo / "scripts" / "bloated.py"
     big_file.write_text("\n".join(f"VAL_{i} = {i}" for i in range(60)) + "\n", encoding="utf-8")
 
@@ -65,66 +38,19 @@ def test_anti_bloat_guard_flags_oversized_files(tmp_path: Path) -> None:
     )
 
 
-def test_anti_bloat_guard_flags_dead_python_and_ts_symbols(tmp_path: Path) -> None:
-    repo = _seed_clean_workspace(tmp_path)
-    (repo / "scripts" / "helper.py").write_text(
-        "def compute_total(x: int, y: int) -> int:\n"
-        "    return x + y\n\n"
-        "def orphan_python_helper() -> int:\n"
-        "    return 42\n\n"
-        "def main() -> int:\n"
-        "    print(compute_total(1, 2))\n"
-        "    return 0\n",
-        encoding="utf-8",
-    )
-    (repo / ".sandcastle" / "runner.ts").write_text(
-        "function unusedPrivateHelper(): number {\n"
-        "  return 99;\n"
-        "}\n"
-        "export function unusedExportedHelper(): string {\n"
-        '  return "never-called";\n'
-        "}\n"
-        "export function runTask(name: string): string {\n"
-        "  return name.trim();\n"
-        "}\n",
+def test_anti_bloat_guard_vulture_flags_dead_python_code(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "dead_sample.py").write_text(
+        "import os\n\n"
+        "def sample() -> int:\n"
+        "    return 1\n"
+        "    unreachable = 2\n"
+        "    return unreachable\n",
         encoding="utf-8",
     )
 
-    res = _run_guard(repo, ["--json"])
+    res = _run_guard(repo, ["--full", "--json"])
     assert res.returncode == 1
     findings = json.loads(res.stdout)
-    categories = {(f["category"], f["file"]) for f in findings}
-    assert ("dead-python-symbol", "scripts/helper.py") in categories
-    assert ("dead-ts-helper", ".sandcastle/runner.ts") in categories
-    assert ("dead-ts-export", ".sandcastle/runner.ts") in categories
-
-
-def test_anti_bloat_guard_flags_duplicated_blocks_across_files(tmp_path: Path) -> None:
-    repo = _seed_clean_workspace(tmp_path)
-    repeated_block = "\n".join(
-        [
-            "export function processBatchAlpha(items: readonly string[]): string[] {",
-            "  const cleanedItems = items.map((entry) => entry.trim().toLowerCase());",
-            "  const nonEmptyEntries = cleanedItems.filter((entry) => entry.length > 0);",
-            "  const deduplicatedEntries = [...new Set(nonEmptyEntries)];",
-            "  const sortedEntries = deduplicatedEntries.sort((a, b) => a.localeCompare(b));",
-            "  return sortedEntries.map((entry, idx) => `${idx + 1}:${entry}`);",
-            "}",
-        ]
-    )
-    (repo / ".sandcastle" / "alpha.ts").write_text(repeated_block + "\n", encoding="utf-8")
-    (repo / ".sandcastle" / "beta.ts").write_text(
-        repeated_block.replace("processBatchAlpha", "processBatchBeta") + "\n",
-        encoding="utf-8",
-    )
-    (repo / ".sandcastle" / "use.test.ts").write_text(
-        'import { processBatchAlpha } from "./alpha.js";\n'
-        'import { processBatchBeta } from "./beta.js";\n'
-        "console.log(processBatchAlpha([]), processBatchBeta([]));\n",
-        encoding="utf-8",
-    )
-
-    res = _run_guard(repo, ["--dup-window", "5", "--json"])
-    assert res.returncode == 1
-    findings = json.loads(res.stdout)
-    assert any(f["category"] == "duplicated-block" for f in findings)
+    assert any(f["category"] == "vulture-dead-code" for f in findings)
