@@ -12,8 +12,8 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { createAgent, createDockerSandbox } from "./agent-factory.js";
 import { formatEndOfRunFooter } from "./coach.js";
 import {
   computeAgentTrustScore,
@@ -246,25 +246,10 @@ async function main(): Promise<void> {
   let clampedNotes: readonly string[] = [];
 
   if (!statsOnly) {
-    const model = process.env["CODEX_MODEL"] ?? "gpt-5.4";
-    const imageName = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
     const tuneRun = await sandcastle.run({
-      sandbox: docker({
-        imageName,
-        mounts: [
-          {
-            hostPath: "~/.codex/auth.json",
-            sandboxPath: "/home/agent/.codex/auth.json",
-            readonly: true,
-          },
-        ],
-      }),
+      sandbox: createDockerSandbox(),
       name: "Parameter Tuner (Read-Only)",
-      agent: sandcastle.codex(model, {
-        effort: "medium",
-        approvalsReviewer: "auto_review",
-        captureSessions: true,
-      }),
+      agent: createAgent("medium"),
       promptFile: "./.sandcastle/tune-prompt.md",
       promptArgs: {
         AGGREGATED_STATS_JSON: JSON.stringify(

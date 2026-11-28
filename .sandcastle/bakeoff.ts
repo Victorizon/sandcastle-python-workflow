@@ -17,15 +17,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { z } from "zod";
+import { createAgent, createDockerSandbox } from "./agent-factory.js";
 import { formatEndOfRunFooter } from "./coach.js";
 import { parseCheckMetrics } from "./dashboard.js";
 import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 
-const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 
 export interface BakeoffVariantSpec {
@@ -168,16 +167,7 @@ export function renderBakeoffReport(
 }
 
 function makeDocker() {
-  return docker({
-    imageName: IMAGE_NAME,
-    mounts: [
-      {
-        hostPath: "~/.codex/auth.json",
-        sandboxPath: "/home/agent/.codex/auth.json",
-        readonly: true,
-      },
-    ],
-  });
+  return createDockerSandbox(IMAGE_NAME);
 }
 
 function parseBakeoffArgs(argv: readonly string[]): { readonly slug: string; readonly brief: string } {
@@ -218,11 +208,7 @@ async function runBakeoff(): Promise<void> {
   const parent = await sandcastle.run({
     sandbox: makeDocker(),
     name: `Bakeoff Explorer (${slug})`,
-    agent: sandcastle.codex(MODEL, {
-      effort: "medium",
-      approvalsReviewer: "auto_review",
-      captureSessions: true,
-    }),
+    agent: createAgent("medium"),
     prompt: [
       `Explore this repo (read GLOSSARY.md, docs/adr/, src/, and tests/) to understand the constraints for:`,
       brief,
@@ -315,11 +301,7 @@ async function runBakeoff(): Promise<void> {
   const judgeRun = await sandcastle.run({
     sandbox: makeDocker(),
     name: `Bakeoff Judge (${slug})`,
-    agent: sandcastle.codex(MODEL, {
-      effort: "high",
-      approvalsReviewer: "auto_review",
-      captureSessions: true,
-    }),
+    agent: createAgent("high"),
     promptFile: "./.sandcastle/bakeoff-judge-prompt.md",
     promptArgs: {
       PROBLEM_BRIEF: brief,

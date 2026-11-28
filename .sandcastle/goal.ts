@@ -16,7 +16,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
-import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { createAgent, createDockerSandbox } from "./agent-factory.js";
 import { formatEndOfRunFooter } from "./coach.js";
 import {
   SpecAuditOutputSchema,
@@ -39,9 +39,9 @@ import {
 import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 
-const MODEL = process.env["CODEX_MODEL"] ?? "gpt-5.4";
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
+const NPM_BIN = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function currentHeadSha(): string {
   try {
@@ -156,22 +156,9 @@ async function runDeterministicSpecAudit(
     `\n--> Running fresh-context End-of-Goal Spec Audit against ${contract.specFile} (${specItems.length} items)...`,
   );
   const auditRun = await sandcastle.run({
-    sandbox: docker({
-      imageName: IMAGE_NAME,
-      mounts: [
-        {
-          hostPath: "~/.codex/auth.json",
-          sandboxPath: "/home/agent/.codex/auth.json",
-          readonly: true,
-        },
-      ],
-    }),
+    sandbox: createDockerSandbox(IMAGE_NAME),
     name: `Spec Auditor (${contract.slug})`,
-    agent: sandcastle.codex(MODEL, {
-      effort: "high",
-      approvalsReviewer: "auto_review",
-      captureSessions: true,
-    }),
+    agent: createAgent("high"),
     promptFile: "./.sandcastle/spec-audit-prompt.md",
     promptArgs: {
       START_COMMIT: startCommit,
@@ -221,6 +208,26 @@ async function runGoalLoop(): Promise<void> {
   let gapPlanRoundsUsed = 0;
   let lastEval = evaluateGoalContract(contract);
 
+  const stopGoalWithReceipt = (reason: string, elapsedMinutes: number): void => {
+    const receipt: GoalReceipt = {
+      goalName: contract.name,
+      slug: contract.slug,
+      status: "STOPPED_CIRCUIT_BREAKER",
+      reason,
+      startedAt: startedAt.toISOString(),
+      finishedAt: new Date().toISOString(),
+      elapsedMinutes: Number(elapsedMinutes.toFixed(2)),
+      cyclesRun,
+      gapPlanRoundsUsed,
+      headCommit: currentHeadSha(),
+      lastEvaluation: lastEval,
+    };
+    const receiptPath = writeGoalReceipt(receipt);
+    const htmlPath = writeStoppedGoalReport(contract, receipt);
+    console.error(`\n[STOP] ${reason}\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
+    process.exitCode = 1;
+  };
+
   while (!lastEval.met) {
     const elapsedMinutes = (Date.now() - startedMs) / 60_000;
     const stopReason = checkCircuitBreaker({
@@ -232,46 +239,17 @@ async function runGoalLoop(): Promise<void> {
       openHumanTickets: lastEval.openHumanTickets,
     });
     if (stopReason) {
-      const receipt: GoalReceipt = {
-        goalName: contract.name,
-        slug: contract.slug,
-        status: "STOPPED_CIRCUIT_BREAKER",
-        reason: stopReason,
-        startedAt: startedAt.toISOString(),
-        finishedAt: new Date().toISOString(),
-        elapsedMinutes: Number(elapsedMinutes.toFixed(2)),
-        cyclesRun,
-        gapPlanRoundsUsed,
-        headCommit: currentHeadSha(),
-        lastEvaluation: lastEval,
-      };
-      const receiptPath = writeGoalReceipt(receipt);
-      const htmlPath = writeStoppedGoalReport(contract, receipt);
-      console.error(`\n[STOP] ${stopReason}\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
-      process.exitCode = 1;
+      stopGoalWithReceipt(stopReason, elapsedMinutes);
       return;
     }
 
     // If tickets are empty but goal checks still fail, wake bounded Gap-Planner
     if (lastEval.openReadyTickets === 0) {
       if (gapPlanRoundsUsed >= contract.maxGapPlanRounds) {
-        const receipt: GoalReceipt = {
-          goalName: contract.name,
-          slug: contract.slug,
-          status: "STOPPED_CIRCUIT_BREAKER",
-          reason: `Goal checks still failing after ${gapPlanRoundsUsed}/${contract.maxGapPlanRounds} gap-planning rounds.`,
-          startedAt: startedAt.toISOString(),
-          finishedAt: new Date().toISOString(),
-          elapsedMinutes: Number(((Date.now() - startedMs) / 60_000).toFixed(2)),
-          cyclesRun,
-          gapPlanRoundsUsed,
-          headCommit: currentHeadSha(),
-          lastEvaluation: lastEval,
-        };
-        const receiptPath = writeGoalReceipt(receipt);
-        const htmlPath = writeStoppedGoalReport(contract, receipt);
-        console.error(`\n[STOP] ${receipt.reason}\nReceipt saved: ${receiptPath}\nPM HTML report: ${htmlPath}`);
-        process.exitCode = 1;
+        stopGoalWithReceipt(
+          `Goal checks still failing after ${gapPlanRoundsUsed}/${contract.maxGapPlanRounds} gap-planning rounds.`,
+          (Date.now() - startedMs) / 60_000,
+        );
         return;
       }
 
@@ -283,22 +261,9 @@ async function runGoalLoop(): Promise<void> {
 
       console.log(`\n--> Gap-Planner round ${gapPlanRoundsUsed}/${contract.maxGapPlanRounds}...`);
       const gapRun = await sandcastle.run({
-        sandbox: docker({
-          imageName: IMAGE_NAME,
-          mounts: [
-            {
-              hostPath: "~/.codex/auth.json",
-              sandboxPath: "/home/agent/.codex/auth.json",
-              readonly: true,
-            },
-          ],
-        }),
+        sandbox: createDockerSandbox(IMAGE_NAME),
         name: `Gap-Planner (${gapPlanRoundsUsed})`,
-        agent: sandcastle.codex(MODEL, {
-          effort: "medium",
-          approvalsReviewer: "auto_review",
-          captureSessions: true,
-        }),
+        agent: createAgent("medium"),
         promptFile: "./.sandcastle/gap-plan-prompt.md",
         promptArgs: {
           GOAL_NAME: contract.name,
@@ -317,7 +282,7 @@ async function runGoalLoop(): Promise<void> {
     cyclesRun += 1;
     const shaBefore = currentHeadSha();
     console.log(`\n--> Launching factory cycle #${cyclesRun}...`);
-    execFileSync("npm", ["--prefix", ".sandcastle", "run", "factory"], { stdio: "inherit" });
+    execFileSync(NPM_BIN, ["--prefix", ".sandcastle", "run", "factory"], { stdio: "inherit" });
     const shaAfter = currentHeadSha();
 
     stalledCycles = shaAfter === shaBefore ? stalledCycles + 1 : 0;
