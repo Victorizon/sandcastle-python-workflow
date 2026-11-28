@@ -91,7 +91,7 @@ def main() -> int:
         ("Strict test guard + coverage floor", test_guard_cmd),
         (
             "AST mutation check",
-            [sys.executable, "scripts/mutation_check.py", "--base", "main", "--skip-baseline"],
+            [sys.executable, "scripts/mutation_check.py", "--base", "main"],
         ),
     ]
 

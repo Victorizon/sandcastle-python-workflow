@@ -1,40 +1,41 @@
+# Hooks run through scripts/venv_run.py so they find .venv tools on Linux, macOS and Windows.
 repos:
   - repo: local
     hooks:
       - id: branch-guard
         name: block direct src/ commits on main
-        entry: .venv/bin/python scripts/branch_guard.py
-        language: system
+        entry: python scripts/venv_run.py python scripts/branch_guard.py
+        language: python
         stages: [pre-commit]
         pass_filenames: false
 
       - id: ruff-format-check
         name: ruff format check
-        entry: .venv/bin/ruff format --check src tests tests_tooling scripts
-        language: system
+        entry: python scripts/venv_run.py ruff format --check src tests tests_tooling scripts
+        language: python
         stages: [pre-commit]
         types: [python]
         pass_filenames: false
 
       - id: python-ratchet
         name: python monotonic ratchet (ruff + pyright + boundaries + secrets)
-        entry: .venv/bin/python scripts/ratchet.py --check
-        language: system
+        entry: python scripts/venv_run.py python scripts/ratchet.py --check
+        language: python
         stages: [pre-commit]
         types: [python]
         pass_filenames: false
 
       - id: import-linter
         name: import-linter deep module boundaries
-        entry: .venv/bin/lint-imports
-        language: system
+        entry: python scripts/venv_run.py lint-imports
+        language: python
         stages: [pre-commit]
         types: [python]
         pass_filenames: false
 
       - id: full-check-pre-push
         name: full 6-gate verification before push (tests + anti-tamper + coverage + mutation)
-        entry: .venv/bin/python scripts/check.py
-        language: system
+        entry: python scripts/venv_run.py python scripts/check.py
+        language: python
         stages: [pre-push]
         pass_filenames: false

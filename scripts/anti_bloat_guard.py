@@ -110,6 +110,13 @@ def _run_external_gate(label: str, cmd: list[str], cwd: Path) -> BloatFinding | 
     return BloatFinding(category=label, file=".", detail=tail or f"exited with {proc.returncode}")
 
 
+def skipped_node_analyzers(root: Path = ROOT) -> list[str]:
+    """Node analyzers `--full` cannot run because `.sandcastle/node_modules` is missing."""
+    if (root / ".sandcastle" / "node_modules").exists():
+        return []
+    return ["knip", "jscpd"]
+
+
 def run_external_analyzers(root: Path = ROOT) -> list[BloatFinding]:
     findings: list[BloatFinding] = []
     py_targets = [d for d in ("src", "scripts") if (root / d).exists()]
@@ -178,6 +185,13 @@ def main() -> int:
     findings = check_oversized_files(root=args.root, max_lines=args.max_lines)
     if args.full:
         findings.extend(run_external_analyzers(root=args.root))
+    skipped = skipped_node_analyzers(args.root) if args.full else []
+    if skipped:
+        print(
+            f"Anti-Bloat Guard WARNING: skipped {' + '.join(skipped)} "
+            "(.sandcastle/node_modules missing; run `npm --prefix .sandcastle ci`).",
+            file=sys.stderr,
+        )
 
     if args.json:
         print(json.dumps([asdict(f) for f in findings], indent=2))
@@ -186,7 +200,8 @@ def main() -> int:
         for item in findings:
             print(f"  - [{item.category}] {item.file}: {item.detail}")
     else:
-        mode = "full (file-size + vulture + knip + jscpd)" if args.full else "file-size ratchet"
+        ran = ["file-size", "vulture", *(t for t in ("knip", "jscpd") if t not in skipped)]
+        mode = f"full ({' + '.join(ran)})" if args.full else "file-size ratchet"
         print(f"Anti-Bloat Guard PASS ({mode}).")
 
     return 1 if findings else 0
