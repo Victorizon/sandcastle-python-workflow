@@ -9,9 +9,11 @@
 import path from "node:path";
 import { computeAgentTrustScore, loadHumanRatings } from "./confidence.js";
 import { writePmHtmlReport } from "./pm-report.js";
+import { normalizeRepoCwd } from "./resilience.js";
 import { loadVerifiedRunHistory } from "./run-history.js";
 
 function main(): void {
+  normalizeRepoCwd();
   const logsDir = path.join(".sandcastle", "logs");
   const { verifiedRuns, skippedMissingFiles } = loadVerifiedRunHistory(logsDir);
   const ratings = loadHumanRatings(logsDir);

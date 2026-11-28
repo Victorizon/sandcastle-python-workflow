@@ -24,7 +24,7 @@ import { parseCheckMetrics } from "./dashboard.js";
 import { DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { REPO_MUTATION_LOCK, acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
-import { installGracefulShutdown, withTransientRetry } from "./resilience.js";
+import { installGracefulShutdown, normalizeRepoCwd, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 
@@ -192,6 +192,7 @@ function parseBakeoffArgs(argv: readonly string[]): { readonly slug: string; rea
 }
 
 async function main(): Promise<void> {
+  normalizeRepoCwd();
   assertCleanGitWorktree();
   const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "bakeoff");
   const uninstallShutdown = installGracefulShutdown(() => releaseLock());

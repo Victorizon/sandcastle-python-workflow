@@ -25,7 +25,7 @@ import {
   loadVerifiedRunHistory,
 } from "./run-history.js";
 import { writePmHtmlReport } from "./pm-report.js";
-import { withTransientRetry } from "./resilience.js";
+import { normalizeRepoCwd, withTransientRetry } from "./resilience.js";
 
 export type TunableParam =
   | "DRIFT_MAX_MINUTES"
@@ -236,6 +236,7 @@ export function assertMinimumRuns(
 }
 
 async function main(): Promise<void> {
+  normalizeRepoCwd();
   const statsOnly = process.argv.includes("--stats-only");
   const logsDir = path.join(".sandcastle", "logs");
   const verifiedRuns = assertMinimumRuns(logsDir, MIN_RUNS_FOR_TUNING);

@@ -16,6 +16,7 @@ import {
 import {
   classifyError,
   installGracefulShutdown,
+  normalizeRepoCwd,
   resolvePythonBin,
   withTransientRetry,
 } from "./resilience.js";
@@ -156,6 +157,25 @@ test("commitScratchState and rollbackToCommitClean keep git worktree clean for s
     assert.equal(existsSync(path.join(repo, ".sandcastle", "logs", "keep.log")), true);
     assert.equal(git(["status", "--porcelain", "--", "stray_untracked.py"]), "");
   } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("normalizeRepoCwd chdirs from .sandcastle/ to parent repo root and leaves other dirs untouched", () => {
+  const originalCwd = process.cwd();
+  const repo = mkdtempSync(path.join(os.tmpdir(), "sandcastle-cwd-norm-"));
+  try {
+    mkdirSync(path.join(repo, ".sandcastle"), { recursive: true });
+    mkdirSync(path.join(repo, "scripts"), { recursive: true });
+    process.chdir(path.join(repo, ".sandcastle"));
+    const normalized = normalizeRepoCwd();
+    assert.equal(path.resolve(normalized), path.resolve(repo));
+    assert.equal(path.resolve(process.cwd()), path.resolve(repo));
+
+    // Calling again from repo root is a safe no-op
+    assert.equal(path.resolve(normalizeRepoCwd()), path.resolve(repo));
+  } finally {
+    process.chdir(originalCwd);
     rmSync(repo, { recursive: true, force: true });
   }
 });

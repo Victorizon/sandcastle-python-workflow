@@ -14,6 +14,7 @@ import {
   loadHumanRatings,
   saveHumanRating,
 } from "./confidence.js";
+import { normalizeRepoCwd } from "./resilience.js";
 import { loadVerifiedRunHistory } from "./run-history.js";
 
 function parseArgs(argv: readonly string[]): {
@@ -51,6 +52,7 @@ function parseArgs(argv: readonly string[]): {
 }
 
 function main(): void {
+  normalizeRepoCwd();
   const args = parseArgs(process.argv.slice(2));
   if (!args.verdict) {
     throw new Error(

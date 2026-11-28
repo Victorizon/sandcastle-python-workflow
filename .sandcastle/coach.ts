@@ -21,7 +21,7 @@ import {
   loadHumanRatings,
 } from "./confidence.js";
 import { countLocalTicketsByStatus } from "./goal-core.js";
-import { resolvePythonBin } from "./resilience.js";
+import { normalizeRepoCwd, resolvePythonBin } from "./resilience.js";
 import { MIN_RUNS_FOR_TUNING, loadVerifiedRunHistory } from "./run-history.js";
 
 export type NudgePriority = "urgent" | "recommended" | "tip";
@@ -416,6 +416,7 @@ export function formatCoachOutput(
 }
 
 function main(): void {
+  normalizeRepoCwd();
   const argv = process.argv.slice(2);
   const ctxIdx = argv.indexOf("--context");
   const contextPrompt = ctxIdx >= 0 ? argv[ctxIdx + 1] : undefined;
