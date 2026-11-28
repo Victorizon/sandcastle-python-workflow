@@ -6,6 +6,26 @@ This template installs the **complete, loop-proof Matt Pocock + Sandcastle workf
 
 ---
 
+## Quick One-Command Install (Recommended)
+
+Run the idempotent cross-platform installer (uses Python stdlib only — works on Windows, WSL2, macOS, and Linux before `.venv` exists):
+
+```bash
+# 1. Preflight check only (makes zero changes; prints exact fix hints for anything missing)
+python scripts/setup.py --check-only
+
+# 2. Full automated setup (.venv, pre-commit/pre-push hooks, .sandcastle npm, Docker image, readiness verifier)
+python scripts/setup.py
+# Useful flags:
+#   --skip-docker      Skip Docker daemon check & image build
+#   --skip-node        Python-only setup (skip .sandcastle npm install)
+#   --init-baselines   Capture initial ratchet baseline from an existing repo
+```
+
+If you prefer manual step-by-step setup, follow Steps 1–4 below.
+
+---
+
 ## Step 1: Clone or Copy Into Your Repo (in WSL2)
 
 ```bash

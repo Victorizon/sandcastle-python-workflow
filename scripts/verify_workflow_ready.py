@@ -7,13 +7,16 @@ deterministically so you know with 100% certainty when setup is ready to ship co
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DOCKER_IMAGE = os.environ.get("SANDCASTLE_IMAGE", "sandcastle:python-codex")
 
 
 def _exists_all(paths: list[str]) -> tuple[bool, str]:
@@ -67,8 +70,13 @@ def check_layer_3() -> tuple[bool, str]:
             "scripts/ratchet-baseline.json",
             "scripts/branch_guard.py",
             "scripts/test_guard.py",
+            "scripts/test_quality_ast.py",
             "scripts/coverage-baseline.json",
             "scripts/mutation_check.py",
+            "scripts/anti_bloat_guard.py",
+            "scripts/adversarial_scan.py",
+            "scripts/venv_run.py",
+            "scripts/setup.py",
             "scripts/check.py",
             "LEGACY_REFACTORING_PLAYBOOK.md",
         ]
@@ -123,19 +131,89 @@ def check_layer_4() -> tuple[bool, str]:
     return True, "local tracker CLI + PR rubric + GitHub CI/ratchet-shrink switchover files ready"
 
 
-def _check_sandcastle_runtime() -> tuple[bool, str]:
-    home = os.environ.get("HOME")
+def _check_agent_auth() -> tuple[bool, str]:
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE")
     if not home:
-        return False, "HOME env var unset (run inside WSL2 or set HOME=$env:USERPROFILE)"
-    auth_json = Path(home) / ".codex" / "auth.json"
-    if not auth_json.exists():
-        return False, f"missing {auth_json} (run `codex login` in WSL2)"
+        return False, "HOME/USERPROFILE env var unset"
+    home_path = Path(home)
+    agent = os.environ.get("SANDCASTLE_AGENT", "").strip().lower()
+    codex_ok = (home_path / ".codex" / "auth.json").is_file()
+    claude_ok = (
+        (home_path / ".claude" / ".credentials.json").is_file()
+        or bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+        or (ROOT / ".sandcastle" / ".env").is_file()
+    )
+    if agent == "claude":
+        if claude_ok:
+            return True, "Claude Code auth present"
+        return False, "SANDCASTLE_AGENT=claude but Claude credentials are missing"
+    if codex_ok:
+        return True, "Codex auth present"
+    if claude_ok:
+        return True, "Claude Code auth present"
+    return (
+        False,
+        f"missing {home_path / '.codex' / 'auth.json'} (run `codex login` or configure Claude)",
+    )
+
+
+def _check_node_runtime() -> tuple[bool, str]:
+    if shutil.which("node") is None:
+        return False, "node CLI not found in PATH (install Node.js >= 20)"
+    node_ver = subprocess.run(
+        ["node", "--version"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    match = re.search(r"v?(\d+)\.", node_ver.stdout)
+    if not match or int(match.group(1)) < 20:
+        return False, f"Node.js >= 20 required (found {node_ver.stdout.strip() or 'unknown'})"
+    if not (ROOT / ".sandcastle" / "node_modules").exists():
+        return False, "missing .sandcastle/node_modules (run `npm --prefix .sandcastle ci`)"
+    return True, f"Node {node_ver.stdout.strip()}"
+
+
+def _check_docker_runtime() -> tuple[bool, str]:
     if shutil.which("docker") is None:
         return False, "docker CLI not found in PATH"
-    docker_info = subprocess.run(["docker", "info"], capture_output=True, text=True, check=False)
+    docker_info = subprocess.run(
+        ["docker", "info"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if docker_info.returncode != 0:
         return False, "Docker daemon not reachable (enable WSL2 integration in Docker Desktop)"
-    return True, "Sandcastle files + HOME + ~/.codex/auth.json + Docker daemon READY"
+    img_check = subprocess.run(
+        ["docker", "image", "inspect", DEFAULT_DOCKER_IMAGE],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if img_check.returncode != 0:
+        return (
+            False,
+            f"Docker image `{DEFAULT_DOCKER_IMAGE}` not built "
+            f"(run `docker build -f .sandcastle/Dockerfile -t {DEFAULT_DOCKER_IMAGE} .`)",
+        )
+    return True, "Docker image READY"
+
+
+def _check_sandcastle_runtime() -> tuple[bool, str]:
+    parts: list[str] = []
+    for check_fn in (_check_node_runtime, _check_agent_auth, _check_docker_runtime):
+        ok, msg = check_fn()
+        if not ok:
+            return False, msg
+        parts.append(msg)
+    return True, "Sandcastle files + " + " + ".join(parts)
 
 
 def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
@@ -147,6 +225,10 @@ def check_layer_5(skip_runtime: bool) -> tuple[bool, str]:
             ".sandcastle/run.ts",
             ".sandcastle/agent-factory.ts",
             ".sandcastle/preflight.ts",
+            ".sandcastle/resilience.ts",
+            ".sandcastle/resilience.test.ts",
+            ".sandcastle/prior-art.ts",
+            ".sandcastle/prior-art.test.ts",
             ".sandcastle/drift-watchdog.ts",
             ".sandcastle/drift-watchdog.test.ts",
             ".sandcastle/dashboard.ts",
@@ -202,7 +284,12 @@ def main() -> int:
     parser.add_argument(
         "--offline",
         action="store_true",
-        help="Skip live Docker daemon & ~/.codex/auth.json runtime checks",
+        help="Skip live Docker daemon & agent auth runtime checks",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON readiness report",
     )
     args = parser.parse_args()
 
@@ -214,13 +301,22 @@ def main() -> int:
         ("Layer 5 — Sandcastle Codex Orchestrator", check_layer_5(args.offline)),
     ]
 
-    all_passed = True
+    all_passed = all(passed for _, (passed, _) in checks)
+    if args.json:
+        payload = {
+            "ready": all_passed,
+            "layers": [
+                {"name": name, "passed": passed, "detail": detail}
+                for name, (passed, detail) in checks
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+        return 0 if all_passed else 1
+
     print("=== Workflow Readiness Report ===\n")
     for name, (passed, detail) in checks:
         tag = "[PASS]" if passed else "[FAIL]"
         print(f"{tag} {name}\n       {detail}")
-        if not passed:
-            all_passed = False
 
     status_line = (
         "WORKFLOW READY — start shipping code."
