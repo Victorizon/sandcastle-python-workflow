@@ -28,6 +28,12 @@ Perform a fresh-context two-axis adversarial code review of branch `{{BRANCH}}` 
 
 </adversarial-scan-report>
 
+<proof-of-work-evidence>
+
+{{POW_EVIDENCE}}
+
+</proof-of-work-evidence>
+
 # REVIEW AXES
 
 1. **Standards axis:** Check every hunk against `CODING_STANDARDS.md` (fail-closed invariants, PII/secret redaction, external adapter boundary, public-seam testing, no deleted/weakened tests, and Fowler smells).

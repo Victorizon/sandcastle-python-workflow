@@ -18,11 +18,13 @@ import { pathToFileURL } from "node:url";
 export type PhaseName =
   | "planner"
   | "implement"
+  | "pow_verify"
   | "review"
   | "fix"
   | "decompose"
   | "merge"
   | "host_check"
+  | "pow_merge_verify"
   | "post_merge_audit";
 
 export type PhaseOutcome = "pass" | "fail" | "rollback" | "escalated" | "decomposed";
