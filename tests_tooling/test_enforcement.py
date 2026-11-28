@@ -17,8 +17,13 @@ def test_ci_hard_enforces_check_anti_bloat_and_adversarial_scan() -> None:
 
 
 def test_orchestrator_hard_enforces_adversarial_scan_and_pinned_base_sha() -> None:
+    slice_runner = (ROOT / ".sandcastle" / "slice-runner.ts").read_text(encoding="utf-8")
+    merge_gate = (ROOT / ".sandcastle" / "merge-gate.ts").read_text(encoding="utf-8")
     run_ts = (ROOT / ".sandcastle" / "run.ts").read_text(encoding="utf-8")
-    assert "python scripts/check.py && python scripts/adversarial_scan.py --base main" in run_ts
-    assert '"scripts/test_guard.py", "--base", preMergeSha' in run_ts
-    assert '"scripts/adversarial_scan.py", "--base", preMergeSha' in run_ts
-    assert "--report-only" not in run_ts
+    assert (
+        "python scripts/check.py && python scripts/adversarial_scan.py --base main" in slice_runner
+    )
+    assert '"scripts/test_guard.py", "--base", preMergeSha' in merge_gate
+    assert '"scripts/adversarial_scan.py", "--base", preMergeSha' in merge_gate
+    for src in (run_ts, slice_runner, merge_gate):
+        assert "--report-only" not in src

@@ -42,5 +42,6 @@ def test_arch_map_impact_flags_cross_language_callers() -> None:
     assert len(data["suggestions"]) == 1
     callers = data["suggestions"][0]["check_callers"]
     assert ".github/workflows/ci.yml" in callers
-    assert ".sandcastle/run.ts" in callers
+    assert ".sandcastle/slice-runner.ts" in callers
+    assert ".sandcastle/merge-gate.ts" in callers
     assert ".pre-commit-config.yaml" in callers

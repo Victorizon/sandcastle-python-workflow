@@ -1,74 +1,39 @@
 /**
- * Deterministic Outer Orchestrator for Matt Pocock's Workflow (Codex + Docker + Python)
- * with Built-In Deterministic Drift Watchdog, 1-Shot Re-Slicer, and Live PM Mission Control Dashboard.
+ * Deterministic Outer Orchestrator for Matt Pocock's Workflow (Codex + Docker + Python).
+ * Thin coordinator delegating single-slice execution to `slice-runner.ts`
+ * and batch merge/verification/reporting to `merge-gate.ts`.
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { Output } from "@ai-hero/sandcastle";
-import { z } from "zod";
-import { PMDashboard, parseCheckMetrics, summarizeAgentEventForPm } from "./dashboard.js";
 import { createAgent, createDockerSandbox, resolveAgentKind } from "./agent-factory.js";
-import { formatEndOfRunFooter } from "./coach.js";
-import { computeAgentTrustScore, loadHumanRatings, scoreFactoryRunConfidence } from "./confidence.js";
-import { writePmHtmlReport } from "./pm-report.js";
-import { loadVerifiedRunHistory, recordFactoryRun } from "./run-history.js";
-import { DriftDetectedError, DriftWatchdog, parseGitNumstat, parsePositiveEnvNumber } from "./drift-watchdog.js";
+import { PMDashboard } from "./dashboard.js";
+import { RunTracer } from "./diagnostics.js";
+import { parsePositiveEnvNumber } from "./drift-watchdog.js";
+import { finalizeFactoryReport, mergeAndVerifyBatch } from "./merge-gate.js";
 import {
-  REPO_MUTATION_LOCK, type TrackerTicketSnapshot, acquireRunLock,
-  assertCleanGitWorktree, commitScratchState, rollbackToCommitClean, validatePlannedTicketsAgainstTracker,
+  REPO_MUTATION_LOCK,
+  type TrackerTicketSnapshot,
+  acquireRunLock,
+  assertCleanGitWorktree,
+  validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
 import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
-import { RunTracer } from "./diagnostics.js";
-import { formatPowEvidenceForReviewer, runMergeProofOfWork, runSliceProofOfWork } from "./pow-verifier.js";
+import {
+  PlanSchema,
+  type SliceRuntimeContext,
+  escalateTicketToHuman,
+  isAheadOfHead,
+} from "./slice-container.js";
+import { processTicket } from "./slice-runner.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = resolvePythonBin();
-
-// Hard numeric caps — guarantees the pipeline can NEVER enter an endless loop.
 const MAX_OUTER_CYCLES = Math.min(100, Math.floor(parsePositiveEnvNumber(process.env["SANDCASTLE_MAX_CYCLES"], 6)));
 const MAX_PARALLEL = 2;
-const MAX_IMPLEMENT_ITERATIONS = 4;
-const MAX_VERIFY_RETRIES = 2;
-const MAX_REVIEW_ROUNDS = 2;
-const MAX_AUTO_SPLITS = 1;
-
-const PlanSchema = z.object({
-  tickets: z.array(
-    z.object({
-      id: z.string().min(1),
-      title: z.string().min(1),
-      branch: z.string().regex(/^sandcastle\/[a-z0-9/_-]+$/u),
-      splitDepth: z.number().int().min(0).default(0),
-    }),
-  ),
-});
-
-const VerdictSchema = z.object({
-  approved: z.boolean(),
-  severity: z.enum(["none", "minor", "blocking"]),
-  summary: z.string(),
-  blockingIssues: z.array(z.string()),
-});
-
-const SplitPlanSchema = z.object({
-  reason: z.string().min(1),
-  subtickets: z
-    .array(
-      z.object({
-        title: z.string().min(1),
-        what_to_build: z.string().min(1),
-        acceptance_criteria: z.array(z.string().min(1)).min(1),
-        blocked_by_indexes: z.array(z.number().int().min(0)).default([]),
-      }),
-    )
-    .min(2)
-    .max(3),
-});
-
-type PlannedTicket = z.infer<typeof PlanSchema>["tickets"][number];
 
 function preflightChecks(): void {
   if (!process.env["HOME"]) {
@@ -113,518 +78,33 @@ function loadLiveTrackerReadyTickets(): TrackerTicketSnapshot[] {
   return JSON.parse(out) as TrackerTicketSnapshot[];
 }
 
-function makeDocker() {
-  return createDockerSandbox(IMAGE_NAME);
-}
-
-function isAheadOfHead(branch: string): boolean {
-  try {
-    const count = execFileSync("git", ["rev-list", "--count", `HEAD..${branch}`], {
-      encoding: "utf8",
-    });
-    return Number(count.trim()) > 0;
-  } catch {
-    return false;
-  }
-}
-
-function escalateTicketToHuman(ticketId: string, reason: string, dashboard: PMDashboard): void {
-  dashboard.upsertSlice(ticketId, {
-    stage: "needs_human",
-    pmSummary: `Escalated to human review: ${reason}`,
-  });
-  dashboard.addEvent({
-    sliceId: ticketId,
-    level: "error",
-    headline: "Escalated slice to human attention",
-    detail: reason,
-  });
-  try {
-    execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "comment", ticketId, "--body", reason], {
-      stdio: "inherit",
-    });
-    execFileSync(PYTHON_BIN, ["scripts/local_tracker.py", "set-status", ticketId, "ready-for-human"], {
-      stdio: "inherit",
-    });
-    commitScratchState(`chore(factory): escalate ${ticketId} to ready-for-human`);
-  } catch (err) {
-    console.error(`Failed to mark ${ticketId} ready-for-human:`, err);
-  }
-}
-
-function parseVerdict(stdout: string): z.infer<typeof VerdictSchema> | null {
-  const match = /<verdict>([\s\S]*?)<\/verdict>/u.exec(stdout);
-  if (!match?.[1]) return null;
-  try {
-    const parsed = VerdictSchema.safeParse(JSON.parse(match[1].trim()));
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null;
-  }
-}
-
-async function handleDriftRemediation(
-  ticket: PlannedTicket,
-  drift: DriftDetectedError,
-  partialDiffStat: string,
-  dashboard: PMDashboard,
-): Promise<boolean> {
-  console.warn(`  [DRIFT] ${ticket.id}: ${drift.message}`);
-
-  if (ticket.splitDepth >= MAX_AUTO_SPLITS) {
-    dashboard.recordChallenge(ticket.id, {
-      source: "drift_watchdog",
-      finding: `${drift.message} (max split depth ${MAX_AUTO_SPLITS} reached)`,
-      outcome: "escalated",
-    });
-    escalateTicketToHuman(
-      ticket.id,
-      `Drift Watchdog stopped ticket (${drift.message}). Already at split depth ${ticket.splitDepth}/${MAX_AUTO_SPLITS}.`,
-      dashboard,
-    );
-    return false;
-  }
-
-  dashboard.recordChallenge(ticket.id, {
-    source: "drift_watchdog",
-    finding: `${drift.message} — waking Decomposer to split into smaller slices.`,
-    outcome: "split",
-  });
-  dashboard.upsertSlice(ticket.id, {
-    stage: "remediating",
-    pmSummary: "Stopped by Drift Watchdog — Decomposer breaking ticket into 2–3 smaller vertical slices.",
-  });
-
-  try {
-    const splitRun = await withTransientRetry(
-      () =>
-        sandcastle.run({
-          sandbox: makeDocker(),
-          name: `Decomposer ${ticket.id}`,
-          agent: createAgent("medium"),
-          promptFile: "./.sandcastle/decompose-prompt.md",
-          promptArgs: {
-            TICKET_ID: ticket.id,
-            DRIFT_REASON: drift.message,
-            PARTIAL_DIFF_STAT: partialDiffStat || "(no committed diff yet)",
-          },
-          output: Output.object({ tag: "split", schema: SplitPlanSchema, maxRetries: 2 }),
-        }),
-      { label: `Decomposer ${ticket.id}` },
-    );
-
-    execFileSync(
-      PYTHON_BIN,
-      ["scripts/local_tracker.py", "split", ticket.id, "--plan-json", "-", "--max-depth", String(MAX_AUTO_SPLITS)],
-      {
-        input: JSON.stringify(splitRun.output),
-        stdio: ["pipe", "inherit", "inherit"],
-      },
-    );
-    commitScratchState(`chore(watchdog): auto-split drifted ticket ${ticket.id}`);
-    try {
-      execFileSync("git", ["branch", "-D", ticket.branch], { stdio: "ignore" });
-    } catch {
-      // Branch may not exist yet if drift occurred before first commit
+async function runWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  let active = 0;
+  const queue: (() => void)[] = [];
+  const acquire = async () =>
+    active < limit ? (active++, Promise.resolve()) : new Promise<void>((resolve) => queue.push(resolve));
+  const release = () => {
+    active--;
+    const next = queue.shift();
+    if (next) {
+      active++;
+      next();
     }
-
-    dashboard.upsertSlice(ticket.id, {
-      stage: "split",
-      pmSummary: `Auto-split into ${splitRun.output.subtickets.length} smaller sub-slices after drift detection.`,
-    });
-    dashboard.addEvent({
-      sliceId: ticket.id,
-      level: "challenge",
-      headline: `DriftWatchdog auto-split oversized ticket into ${splitRun.output.subtickets.length} slices`,
-      detail: drift.message,
-    });
-    return true;
-  } catch (err) {
-    escalateTicketToHuman(
-      ticket.id,
-      `Drift Watchdog fired (${drift.message}) and Decomposer failed (${err instanceof Error ? err.message : String(err)}).`,
-      dashboard,
-    );
-    return false;
-  }
-}
-
-async function runFreshFixContainer(params: {
-  readonly ticket: PlannedTicket;
-  readonly source: string;
-  readonly details: string;
-  readonly dashboard: PMDashboard;
-  readonly startedAtMs: number;
-  readonly logPath: string;
-}): Promise<{ readonly ok: boolean; readonly decomposed: boolean }> {
-  await using fixSandbox = await sandcastle.createSandbox({
-    sandbox: makeDocker(),
-    branch: params.ticket.branch,
-  });
-  const watchdog = new DriftWatchdog();
-  try {
-    const fixRun = await fixSandbox.run({
-      name: `Fixer ${params.ticket.id}`,
-      agent: createAgent("medium"),
-      promptFile: "./.sandcastle/fix-prompt.md",
-      promptArgs: {
-        TICKET_ID: params.ticket.id,
-        TICKET_TITLE: params.ticket.title,
-        BRANCH: params.ticket.branch,
-        FAILURE_SOURCE: params.source,
-        FAILURE_DETAILS: params.details,
-      },
-      maxIterations: MAX_IMPLEMENT_ITERATIONS,
-      signal: watchdog.signal,
-      logging: {
-        type: "file",
-        path: params.logPath,
-        onAgentStreamEvent: (ev) => {
-          watchdog.onEvent(ev);
-          const pmNote = summarizeAgentEventForPm(ev);
-          if (pmNote) {
-            params.dashboard.upsertSlice(params.ticket.id, {
-              pmSummary: pmNote,
-              watchdog: {
-                elapsedSec: Math.round((Date.now() - params.startedAtMs) / 1000),
-                toolCalls: watchdog.toolCallCount,
-              },
-            });
-          }
-        },
-      },
-    });
-
-    const numstat = await fixSandbox.exec("git diff --numstat main..HEAD");
-    const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
-    const lastCtx = fixRun.iterations.at(-1)?.contextWindow;
-    const postDrift = watchdog.checkPostRun({
-      diffFiles,
-      diffLines,
-      contextTokens: lastCtx?.tokens,
-      contextLimit: lastCtx?.limit,
-      completed: fixRun.completionSignal !== undefined,
-    });
-    if (postDrift) {
-      const stat = await fixSandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(
-        params.ticket,
-        postDrift,
-        stat.stdout.trim(),
-        params.dashboard,
-      );
-      return { ok: false, decomposed };
-    }
-    return { ok: true, decomposed: false };
-  } catch (err) {
-    watchdog.dispose();
-    const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
-    if (drift) {
-      const stat = await fixSandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(
-        params.ticket,
-        drift,
-        stat.stdout.trim(),
-        params.dashboard,
-      );
-      return { ok: false, decomposed };
-    }
-    throw err;
-  } finally {
-    watchdog.dispose();
-  }
-}
-
-async function processTicket(
-  ticket: PlannedTicket, dashboard: PMDashboard, cycle: number, tracer: RunTracer,
-): Promise<{ approved: boolean; decomposed: boolean }> {
-  const startedAtMs = Date.now();
-  mkdirSync(".sandcastle/logs", { recursive: true });
-  const safeId = ticket.id.replaceAll(/[^a-z0-9_-]/giu, "-");
-  const logPath = `.sandcastle/logs/${safeId}-implement.log`;
-
-  dashboard.upsertSlice(ticket.id, {
-    title: ticket.title,
-    branch: ticket.branch,
-    splitDepth: ticket.splitDepth,
-    stage: "implementing",
-    pmSummary: "Booting isolated Builder container & starting TDD implementation...",
-  });
-
-  // Phase A: Isolated Builder container (disposed immediately once commit or drift finishes)
-  let impl: sandcastle.SandboxRunResult;
-  {
-    await using builderSandbox = await sandcastle.createSandbox({
-      sandbox: makeDocker(),
-      branch: ticket.branch,
-    });
-
-    const watchdog = new DriftWatchdog();
-    try {
-      impl = await builderSandbox.run({
-        name: `Implementer ${ticket.id}`,
-        agent: createAgent("medium"),
-        promptFile: "./.sandcastle/implement-prompt.md",
-        promptArgs: {
-          TICKET_ID: ticket.id,
-          TICKET_TITLE: ticket.title,
-          BRANCH: ticket.branch,
-        },
-        maxIterations: MAX_IMPLEMENT_ITERATIONS,
-        signal: watchdog.signal,
-        logging: {
-          type: "file",
-          path: logPath,
-          onAgentStreamEvent: (ev) => {
-            watchdog.onEvent(ev);
-            const pmNote = summarizeAgentEventForPm(ev);
-            if (pmNote) {
-              dashboard.upsertSlice(ticket.id, {
-                pmSummary: pmNote,
-                watchdog: {
-                  elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
-                  toolCalls: watchdog.toolCallCount,
-                },
-              });
-            }
-          },
-        },
-      });
-    } catch (err) {
-      watchdog.dispose();
-      const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
-      if (drift) {
-        const stat = await builderSandbox.exec("git diff --stat main..HEAD");
-        const decomposed = await handleDriftRemediation(ticket, drift, stat.stdout.trim(), dashboard);
-        return { approved: false, decomposed };
+  };
+  return Promise.allSettled(
+    items.map(async (item) => {
+      await acquire();
+      try {
+        return await worker(item);
+      } finally {
+        release();
       }
-      throw err;
-    } finally {
-      watchdog.dispose();
-    }
-
-    const numstat = await builderSandbox.exec("git diff --numstat main..HEAD");
-    const { files: diffFiles, lines: diffLines } = parseGitNumstat(numstat.stdout);
-    const lastCtx = impl.iterations.at(-1)?.contextWindow;
-    const ctxPct =
-      lastCtx?.limit && lastCtx.limit > 0 ? Math.round((lastCtx.tokens / lastCtx.limit) * 100) : 0;
-    dashboard.upsertSlice(ticket.id, {
-      watchdog: {
-        elapsedSec: Math.round((Date.now() - startedAtMs) / 1000),
-        toolCalls: watchdog.toolCallCount,
-        diffLines,
-        contextPercent: ctxPct,
-      },
-    });
-
-    const postDrift = watchdog.checkPostRun({
-      diffFiles,
-      diffLines,
-      contextTokens: lastCtx?.tokens,
-      contextLimit: lastCtx?.limit,
-      completed: impl.completionSignal !== undefined,
-    });
-    if (postDrift) {
-      const stat = await builderSandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(ticket, postDrift, stat.stdout.trim(), dashboard);
-      return { approved: false, decomposed };
-    }
-  }
-
-  // Phase B: Fresh, zero-trust Verifier container per attempt (read-only /opt/venv)
-  let checkPassed = false;
-  let tamperStrikes = 0;
-  for (let attempt = 0; attempt <= MAX_VERIFY_RETRIES; attempt++) {
-    dashboard.upsertSlice(ticket.id, {
-      stage: "verifying",
-      pmSummary: `Fresh Verifier container running 6 mechanical checks (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES + 1})...`,
-    });
-
-    let guardExit = 0;
-    let guardOut = "";
-    let checkExit = 0;
-    let checkOut = "";
-    {
-      await using verifySandbox = await sandcastle.createSandbox({
-        sandbox: makeDocker(),
-        branch: ticket.branch,
-      });
-      const guardRes = await verifySandbox.exec("python scripts/test_guard.py --base main");
-      guardExit = guardRes.exitCode;
-      guardOut = guardRes.stdout;
-      if (guardExit === 0) {
-        const checkRes = await verifySandbox.exec("python scripts/check.py");
-        checkExit = checkRes.exitCode;
-        checkOut = `${checkRes.stdout}\n${checkRes.stderr}`.trim();
-      }
-    }
-
-    if (guardExit !== 0) {
-      tamperStrikes += 1;
-      dashboard.recordChallenge(ticket.id, {
-        source: "test_guard",
-        finding: `Blocked test/fixture/harness tampering (strike ${tamperStrikes}/2).`,
-        outcome: tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES ? "blocked" : "fixed",
-      });
-      if (tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES) {
-        escalateTicketToHuman(
-          ticket.id,
-          `BLOCKED by strict test/harness lock (\`scripts/test_guard.py\`, strike ${tamperStrikes}):\n\n${guardOut}`,
-          dashboard,
-        );
-        return { approved: false, decomposed: false };
-      }
-      dashboard.upsertSlice(ticket.id, {
-        stage: "remediating",
-        pmSummary:
-          "Test Guard caught unauthorized test/harness edit (strike 1/2) — booting fresh Fixer to restore locked files & fix properly...",
-      });
-      const fixRes = await runFreshFixContainer({
-        ticket,
-        source: "scripts/test_guard.py (anti-tamper lock)",
-        details: guardOut,
-        dashboard,
-        startedAtMs,
-        logPath,
-      });
-      if (!fixRes.ok) {
-        return { approved: false, decomposed: fixRes.decomposed };
-      }
-      continue;
-    }
-
-    if (checkExit === 0) {
-      const q = parseCheckMetrics(checkOut);
-      dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
-      checkPassed = true;
-      break;
-    }
-    if (attempt === MAX_VERIFY_RETRIES) {
-      escalateTicketToHuman(
-        ticket.id,
-        `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fresh Fixer rounds.`,
-        dashboard,
-      );
-      return { approved: false, decomposed: false };
-    }
-    dashboard.upsertSlice(ticket.id, {
-      stage: "remediating",
-      pmSummary: `6-gate check failed — booting fresh Fixer container (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES})...`,
-    });
-    const fixRes = await runFreshFixContainer({
-      ticket,
-      source: "python scripts/check.py (6-gate verification)",
-      details: checkOut.slice(-4000),
-      dashboard,
-      startedAtMs,
-      logPath,
-    });
-    if (!fixRes.ok) {
-      return { approved: false, decomposed: fixRes.decomposed };
-    }
-  }
-
-  if (!checkPassed || !isAheadOfHead(ticket.branch)) {
-    return { approved: false, decomposed: false };
-  }
-
-  // Phase C: Proof-of-Work Verifier + Fresh-context Adversarial Reviewer in clean containers
-  const powVerdict = await runSliceProofOfWork({ imageName: IMAGE_NAME, ticket, cycle, tracer });
-  for (let round = 1; round <= MAX_REVIEW_ROUNDS; round++) {
-    dashboard.upsertSlice(ticket.id, {
-      stage: "reviewing",
-      pmSummary: `Fresh Adversarial Reviewer checking diff against spec & CODING_STANDARDS.md (round ${round}/${MAX_REVIEW_ROUNDS})...`,
-    });
-
-    let reviewStdout = "";
-    let postCheckExit = 1;
-    let postCheckOut = "";
-    {
-      await using reviewSandbox = await sandcastle.createSandbox({ sandbox: makeDocker(), branch: ticket.branch });
-      const review = await reviewSandbox.run({
-        name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
-        agent: createAgent("high"),
-        promptFile: "./.sandcastle/review-prompt.md",
-        promptArgs: {
-          TICKET_ID: ticket.id,
-          TICKET_TITLE: ticket.title,
-          BRANCH: ticket.branch,
-          POW_EVIDENCE: formatPowEvidenceForReviewer(powVerdict),
-        },
-        maxIterations: 1,
-      });
-      reviewStdout = review.stdout;
-      const postReviewCheck = await reviewSandbox.exec(
-        "python scripts/check.py && python scripts/adversarial_scan.py --base main",
-      );
-      postCheckExit = postReviewCheck.exitCode;
-      postCheckOut = `${postReviewCheck.stdout}\n${postReviewCheck.stderr}`.trim();
-    }
-
-    const verdict = parseVerdict(reviewStdout);
-    if (postCheckExit === 0 && verdict?.approved) {
-      const q = parseCheckMetrics(postCheckOut);
-      dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
-      dashboard.upsertSlice(ticket.id, {
-        stage: "merging",
-        pmSummary: `Approved by Fresh Reviewer: ${verdict.summary}`,
-      });
-      dashboard.addEvent({
-        sliceId: ticket.id,
-        level: "success",
-        headline: "Passed 6 gates & Fresh Adversarial Review",
-        detail: verdict.summary,
-      });
-      return { approved: true, decomposed: false };
-    }
-
-    const findingText =
-      verdict?.blockingIssues.join("; ") || "Reviewer raised blocking findings or check.py failed.";
-    if (round === MAX_REVIEW_ROUNDS) {
-      dashboard.recordChallenge(ticket.id, {
-        source: "reviewer",
-        finding: findingText,
-        outcome: "escalated",
-      });
-      escalateTicketToHuman(
-        ticket.id,
-        `Stopped at max review rounds (${MAX_REVIEW_ROUNDS}). Blocking findings: ${findingText}`,
-        dashboard,
-      );
-      return { approved: false, decomposed: false };
-    }
-
-    dashboard.recordChallenge(ticket.id, {
-      source: "reviewer",
-      finding: findingText,
-      outcome: "fixed",
-    });
-    dashboard.addEvent({
-      sliceId: ticket.id,
-      level: "challenge",
-      headline: `Adversarial Reviewer challenged diff (round ${round})`,
-      detail: findingText,
-    });
-    dashboard.upsertSlice(ticket.id, {
-      stage: "remediating",
-      pmSummary: `Adversarial Reviewer caught blocking findings — booting fresh Fixer container...`,
-    });
-
-    const feedback = verdict?.blockingIssues.join("\n- ") || postCheckOut.slice(-3000);
-    const fixRes = await runFreshFixContainer({
-      ticket,
-      source: `Adversarial Reviewer (round ${round})`,
-      details: `- ${feedback}`,
-      dashboard,
-      startedAtMs,
-      logPath,
-    });
-    if (!fixRes.ok) {
-      return { approved: false, decomposed: fixRes.decomposed };
-    }
-  }
-
-  return { approved: false, decomposed: false };
+    }),
+  );
 }
 
 async function main(): Promise<void> {
@@ -632,6 +112,7 @@ async function main(): Promise<void> {
   const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "factory");
   const tracer = new RunTracer();
   const dashboard = new PMDashboard({ mode: "factory", dockerImage: IMAGE_NAME, maxCycles: MAX_OUTER_CYCLES });
+  const ctx: SliceRuntimeContext = { imageName: IMAGE_NAME, pythonBin: PYTHON_BIN, dashboard, tracer };
   const dashUrl = await dashboard.start();
   console.log(`\nPM Mission Control Dashboard LIVE at: ${dashUrl}\n`);
   const uninstallShutdown = installGracefulShutdown(async () => {
@@ -647,7 +128,7 @@ async function main(): Promise<void> {
       const planRun = await withTransientRetry(
         () =>
           sandcastle.run({
-            sandbox: makeDocker(),
+            sandbox: createDockerSandbox(IMAGE_NAME),
             name: "Planner",
             agent: createAgent("medium"),
             logging: tracer.sandboxLogging(cycle, "planner"),
@@ -660,8 +141,16 @@ async function main(): Promise<void> {
         planRun.output.tickets,
         loadLiveTrackerReadyTickets(),
       );
-      tracer.recordSpan({ cycle, phase: "planner", outcome: droppedReasons.length ? "fail" : "pass", durationMs: performance.now() - tPlan, detail: `picked=${tickets.length} dropped=${droppedReasons.length}${droppedReasons.length ? ` (${droppedReasons.join("; ")})` : ""}` });
-      if (droppedReasons.length > 0) console.warn("  [PREFLIGHT] Dropped invalid Planner selections:", droppedReasons.join("; "));
+      tracer.recordSpan({
+        cycle,
+        phase: "planner",
+        outcome: droppedReasons.length ? "fail" : "pass",
+        durationMs: performance.now() - tPlan,
+        detail: `picked=${tickets.length} dropped=${droppedReasons.length}${droppedReasons.length ? ` (${droppedReasons.join("; ")})` : ""}`,
+      });
+      if (droppedReasons.length > 0) {
+        console.warn("  [PREFLIGHT] Dropped invalid Planner selections:", droppedReasons.join("; "));
+      }
       if (tickets.length === 0) {
         dashboard.setRunStatus("complete", "All planned slices complete — no ready-for-agent work remaining.");
         break;
@@ -678,37 +167,14 @@ async function main(): Promise<void> {
       }
       dashboard.setCycle(cycle, `Running ${tickets.length} unblocked slice(s) in isolated Docker containers...`);
 
-      let active = 0;
-      const queue: (() => void)[] = [];
-      const acquire = async () =>
-        active < MAX_PARALLEL
-          ? (active++, Promise.resolve())
-          : new Promise<void>((resolve) => queue.push(resolve));
-      const release = () => {
-        active--;
-        const next = queue.shift();
-        if (next) {
-          active++;
-          next();
-        }
-      };
-
-      const outcomes = await Promise.allSettled(
-        tickets.map(async (ticket) => {
-          await acquire();
-          try {
-            return await processTicket(ticket, dashboard, cycle, tracer);
-          } finally {
-            release();
-          }
-        }),
+      const outcomes = await runWithConcurrency(tickets, MAX_PARALLEL, (ticket) =>
+        processTicket(ticket, cycle, ctx),
       );
-
       outcomes.forEach((outcome, idx) => {
         if (outcome.status === "rejected" && tickets[idx]) {
           const reason = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
           console.error(`  [CRASH] Worker failed for ${tickets[idx].id}: ${reason}`);
-          escalateTicketToHuman(tickets[idx].id, `Worker crashed unexpectedly: ${reason}`, dashboard);
+          escalateTicketToHuman(tickets[idx].id, `Worker crashed unexpectedly: ${reason}`, dashboard, PYTHON_BIN);
         }
       });
 
@@ -716,199 +182,19 @@ async function main(): Promise<void> {
         const outcome = outcomes[idx];
         return outcome?.status === "fulfilled" && outcome.value.approved && isAheadOfHead(t.branch);
       });
-      const anyDecomposed = outcomes.some(
-        (o) => o.status === "fulfilled" && o.value.decomposed,
-      );
+      const anyDecomposed = outcomes.some((o) => o.status === "fulfilled" && o.value.decomposed);
 
       if (readyToMerge.length === 0) {
-        if (anyDecomposed) {
-          continue;
-        }
+        if (anyDecomposed) continue;
         dashboard.setRunStatus("blocked", "Cycle stopped — remaining slices escalated for human review.");
         break;
       }
 
-      const preMergeSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-      dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
-      const tMerge = performance.now();
-      try {
-        await sandcastle.run({
-          sandbox: makeDocker(), name: "Merger", branchStrategy: { type: "head" }, maxIterations: 4,
-          agent: createAgent("medium"), logging: tracer.sandboxLogging(cycle, "merge"),
-          promptFile: "./.sandcastle/merge-prompt.md",
-          promptArgs: {
-            BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
-            TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
-          },
-        });
-      } catch (mergeErr) {
-        rollbackToCommitClean(preMergeSha);
-        tracer.recordSpan({ cycle, phase: "merge", outcome: "rollback", durationMs: performance.now() - tMerge, detail: `Merger crashed; rolled back to ${preMergeSha.slice(0, 7)}` });
-        throw mergeErr;
-      }
-      tracer.recordSpan({ cycle, phase: "merge", outcome: "pass", durationMs: performance.now() - tMerge, detail: readyToMerge.map((t) => t.id).join(", ") });
-
-      // Deterministic host-side verification after Merger + optional multi-branch cross-slice audit
-      const tHost = performance.now();
-      let hostCheckPassed = true;
-      try {
-        execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
-        execFileSync(PYTHON_BIN, ["scripts/test_guard.py", "--base", preMergeSha], { stdio: "inherit" });
-        execFileSync(PYTHON_BIN, ["scripts/adversarial_scan.py", "--base", preMergeSha], { stdio: "inherit" });
-      } catch {
-        hostCheckPassed = false;
-      }
-      tracer.recordSpan({ cycle, phase: "host_check", outcome: hostCheckPassed ? "pass" : "rollback", durationMs: performance.now() - tHost, detail: hostCheckPassed ? "check.py + test_guard + adversarial_scan PASS" : "host post-merge gate FAILED" });
-
-      let multiMergeConflictIssue: string | null = null;
-      if (hostCheckPassed && readyToMerge.length >= 2) {
-        const mergePow = await runMergeProofOfWork({ imageName: IMAGE_NAME, preMergeSha, tickets: readyToMerge, cycle, tracer });
-        const tAudit = performance.now();
-        const mergeReview = await withTransientRetry(
-          () =>
-            sandcastle.run({
-              sandbox: makeDocker(),
-              name: "Post-Merge Cross-Slice Auditor",
-              agent: createAgent("high"),
-              logging: tracer.sandboxLogging(cycle, "post_merge_audit"),
-              prompt: [
-                `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
-                ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
-                `Cross-Slice Proof-of-Work Evidence:\n${formatPowEvidenceForReviewer(mergePow)}`,
-                `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
-                `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
-                `Then output <promise>COMPLETE</promise>.`,
-              ].join("\n"),
-              maxIterations: 1,
-            }),
-          { label: "Post-Merge Cross-Slice Auditor" },
-        );
-        const mergeVerdict = parseVerdict(mergeReview.stdout);
-        if (!mergeVerdict?.approved) {
-          multiMergeConflictIssue =
-            mergeVerdict?.blockingIssues.join("; ") ||
-            "Post-merge cross-slice auditor flagged a conflict or dropped requirement.";
-        }
-        tracer.recordSpan({ cycle, phase: "post_merge_audit", outcome: multiMergeConflictIssue ? "rollback" : "pass", durationMs: performance.now() - tAudit, detail: multiMergeConflictIssue ?? mergeVerdict?.summary ?? "approved" });
-      }
-
-      if (!hostCheckPassed || multiMergeConflictIssue !== null) {
-        // Atomic rollback so main is NEVER left broken or dirty with untracked files!
-        try {
-          rollbackToCommitClean(preMergeSha);
-        } catch (err) {
-          console.error(`Failed to roll back main to ${preMergeSha}:`, err);
-        }
-        const reason = multiMergeConflictIssue
-          ? `Post-merge cross-slice audit blocked batch (main atomically rolled back to ${preMergeSha.slice(0, 7)}): ${multiMergeConflictIssue}`
-          : `Host post-merge \`python scripts/check.py\` FAILED (main atomically rolled back to ${preMergeSha.slice(0, 7)}).`;
-        for (const t of readyToMerge) {
-          escalateTicketToHuman(t.id, reason, dashboard);
-        }
-        dashboard.setRunStatus(
-          "blocked",
-          `Post-merge verification failed — main atomically rolled back to ${preMergeSha.slice(0, 7)}.`,
-        );
-        break;
-      }
-
-      for (const merged of readyToMerge) {
-        dashboard.upsertSlice(merged.id, {
-          stage: "merged",
-          pmSummary: "Merged into main, re-verified on host via check.py, and marked resolved.",
-        });
-      }
+      const mergedOk = await mergeAndVerifyBatch(readyToMerge, cycle, ctx);
+      if (!mergedOk) break;
     }
   } finally {
-    const finalState = dashboard.getState();
-    const recorded = recordFactoryRun(finalState);
-    const { verifiedRuns } = loadVerifiedRunHistory();
-    const trust = computeAgentTrustScore(verifiedRuns, loadHumanRatings());
-    const conf = recorded
-      ? scoreFactoryRunConfidence(recorded)
-      : {
-          overall: {
-            score: finalState.runStatus === "complete" ? 100 : 40,
-            badge:
-              finalState.runStatus === "complete"
-                ? ("Spot-Check Ready" as const)
-                : ("Blocked — Do Not Ship" as const),
-            status:
-              finalState.runStatus === "complete"
-                ? ("success" as const)
-                : ("blocked" as const),
-            reasons: [finalState.headline],
-          },
-          bySlice: new Map(),
-        };
-
-    const htmlPath = writePmHtmlReport({
-      kind: "factory",
-      slug: "session",
-      title: `Sandcastle Factory Run Summary (${conf.overall.score}/100)`,
-      status: conf.overall.status,
-      statusLabel: `${conf.overall.score}/100 · ${conf.overall.badge}`,
-      executiveSummary: `${finalState.headline} Confidence assessment: ${conf.overall.reasons.join(" ")}`,
-      metrics: [
-        {
-          label: "Run Confidence",
-          value: `${conf.overall.score}/100`,
-          note: conf.overall.badge,
-        },
-        {
-          label: "Slices Shipped",
-          value: `${finalState.metrics.completedSlices} / ${finalState.metrics.totalSlices}`,
-          note: `${finalState.metrics.progressPercent}% complete`,
-        },
-        {
-          label: "Test Strength",
-          value:
-            finalState.metrics.latestMutationScore !== null
-              ? `${finalState.metrics.latestMutationScore}%`
-              : "--",
-          note:
-            finalState.metrics.latestCoveragePercent !== null
-              ? `Coverage ${finalState.metrics.latestCoveragePercent}%`
-              : "Coverage --",
-        },
-        {
-          label: "Agent Trust",
-          value: `${trust.trustScore}/100`,
-          note: trust.tier,
-        },
-      ],
-      sections: [
-        {
-          heading: "Slice Outcomes & Deterministic Confidence",
-          table: {
-            headers: ["Slice", "Title", "Stage", "Confidence", "Diff Lines", "Summary"],
-            rows: finalState.slices.map((s) => {
-              const sc = conf.bySlice.get(s.id);
-              return [
-                s.id,
-                s.title,
-                s.stage,
-                sc ? `${sc.score}/100 · ${sc.badge}` : "--",
-                String(s.watchdog.diffLines),
-                s.pmSummary,
-              ];
-            }),
-          },
-        },
-        {
-          heading: "Confidence Factors & Human Reality Check",
-          bullets: [
-            ...conf.overall.reasons,
-            `Rolling Agent Trust across ${trust.runsAnalyzed} verified run(s): ${trust.trustScore}/100 (${trust.tier}).`,
-            `Optional post-review feedback: run \`npm --prefix .sandcastle run rate -- --latest --verdict good|tweak|rework\`.`,
-          ],
-        },
-      ],
-    });
-    console.log(
-      `Confidence: ${conf.overall.score}/100 (${conf.overall.badge})\nPM HTML report saved to: ${htmlPath}` +
-        formatEndOfRunFooter({ kind: "factory", reportPath: htmlPath }),
-    );
+    finalizeFactoryReport(dashboard);
     uninstallShutdown();
     await dashboard.close();
     releaseLock();
