@@ -114,8 +114,10 @@ async function handleDriftRemediation(
   ticket: PlannedTicket,
   drift: DriftDetectedError,
   partialDiffStat: string,
+  cycle: number,
   ctx: SliceRuntimeContext,
 ): Promise<boolean> {
+  const tDecompose = performance.now();
   console.warn(`  [DRIFT] ${ticket.id}: ${drift.message}`);
 
   if (ticket.splitDepth >= MAX_AUTO_SPLITS) {
@@ -130,6 +132,14 @@ async function handleDriftRemediation(
       ctx.dashboard,
       ctx.pythonBin,
     );
+    ctx.tracer.recordSpan({
+      cycle,
+      sliceId: ticket.id,
+      phase: "decompose",
+      outcome: "escalated",
+      durationMs: performance.now() - tDecompose,
+      detail: `max split depth ${MAX_AUTO_SPLITS} reached`,
+    });
     return false;
   }
 
@@ -186,6 +196,14 @@ async function handleDriftRemediation(
       headline: `DriftWatchdog auto-split oversized ticket into ${splitRun.output.subtickets.length} slices`,
       detail: drift.message,
     });
+    ctx.tracer.recordSpan({
+      cycle,
+      sliceId: ticket.id,
+      phase: "decompose",
+      outcome: "decomposed",
+      durationMs: performance.now() - tDecompose,
+      detail: `split into ${splitRun.output.subtickets.length} sub-slices`,
+    });
     return true;
   } catch (err) {
     escalateTicketToHuman(
@@ -194,12 +212,22 @@ async function handleDriftRemediation(
       ctx.dashboard,
       ctx.pythonBin,
     );
+    ctx.tracer.recordSpan({
+      cycle,
+      sliceId: ticket.id,
+      phase: "decompose",
+      outcome: "escalated",
+      durationMs: performance.now() - tDecompose,
+      detail: err instanceof Error ? err.message : String(err),
+    });
     return false;
   }
 }
 
 export async function runWatchedContainer(params: {
   readonly ticket: PlannedTicket;
+  readonly cycle: number;
+  readonly phase: "implement" | "fix";
   readonly name: string;
   readonly promptFile: string;
   readonly promptArgs: Record<string, string>;
@@ -208,6 +236,7 @@ export async function runWatchedContainer(params: {
   readonly recordPostMetrics: boolean;
   readonly ctx: SliceRuntimeContext;
 }): Promise<{ readonly ok: boolean; readonly decomposed: boolean }> {
+  const tPhase = performance.now();
   await using sandbox = await sandcastle.createSandbox({
     sandbox: createDockerSandbox(params.ctx.imageName),
     branch: params.ticket.branch,
@@ -265,18 +294,62 @@ export async function runWatchedContainer(params: {
     });
     if (postDrift) {
       const stat = await sandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(params.ticket, postDrift, stat.stdout.trim(), params.ctx);
+      const decomposed = await handleDriftRemediation(
+        params.ticket,
+        postDrift,
+        stat.stdout.trim(),
+        params.cycle,
+        params.ctx,
+      );
+      params.ctx.tracer.recordSpan({
+        cycle: params.cycle,
+        sliceId: params.ticket.id,
+        phase: params.phase,
+        outcome: decomposed ? "decomposed" : "escalated",
+        durationMs: performance.now() - tPhase,
+        detail: postDrift.message,
+      });
       return { ok: false, decomposed };
     }
+    params.ctx.tracer.recordSpan({
+      cycle: params.cycle,
+      sliceId: params.ticket.id,
+      phase: params.phase,
+      outcome: "pass",
+      durationMs: performance.now() - tPhase,
+      detail: `${diffFiles} file(s), ${diffLines} line(s)`,
+    });
     return { ok: true, decomposed: false };
   } catch (err) {
     watchdog.dispose();
     const drift = watchdog.drift ?? (err instanceof DriftDetectedError ? err : null);
     if (drift) {
       const stat = await sandbox.exec("git diff --stat main..HEAD");
-      const decomposed = await handleDriftRemediation(params.ticket, drift, stat.stdout.trim(), params.ctx);
+      const decomposed = await handleDriftRemediation(
+        params.ticket,
+        drift,
+        stat.stdout.trim(),
+        params.cycle,
+        params.ctx,
+      );
+      params.ctx.tracer.recordSpan({
+        cycle: params.cycle,
+        sliceId: params.ticket.id,
+        phase: params.phase,
+        outcome: decomposed ? "decomposed" : "escalated",
+        durationMs: performance.now() - tPhase,
+        detail: drift.message,
+      });
       return { ok: false, decomposed };
     }
+    params.ctx.tracer.recordSpan({
+      cycle: params.cycle,
+      sliceId: params.ticket.id,
+      phase: params.phase,
+      outcome: "fail",
+      durationMs: performance.now() - tPhase,
+      detail: err instanceof Error ? err.message : String(err),
+    });
     throw err;
   } finally {
     watchdog.dispose();

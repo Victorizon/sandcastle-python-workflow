@@ -7,7 +7,7 @@ import { mkdirSync } from "node:fs";
 import * as sandcastle from "@ai-hero/sandcastle";
 import { createAgent, createDockerSandbox } from "./agent-factory.js";
 import { parseCheckMetrics } from "./dashboard.js";
-import { formatPowEvidenceForReviewer, runSliceProofOfWork } from "./pow-verifier.js";
+import { type PowVerdict, formatPowEvidenceForReviewer, runSliceProofOfWork } from "./pow-verifier.js";
 import {
   type PlannedTicket,
   type SliceRuntimeContext,
@@ -20,10 +20,84 @@ import {
 const MAX_VERIFY_RETRIES = 2;
 const MAX_REVIEW_ROUNDS = 2;
 
+export interface SliceRunnerOps {
+  readonly runWatched: typeof runWatchedContainer;
+  readonly runVerify: (branch: string, imageName: string) => Promise<{
+    readonly guardExit: number;
+    readonly guardOut: string;
+    readonly checkExit: number;
+    readonly checkOut: string;
+  }>;
+  readonly runPow: typeof runSliceProofOfWork;
+  readonly runReview: (params: {
+    readonly ticket: PlannedTicket;
+    readonly round: number;
+    readonly powVerdict: PowVerdict | null;
+    readonly imageName: string;
+  }) => Promise<{
+    readonly reviewStdout: string;
+    readonly postCheckExit: number;
+    readonly postCheckOut: string;
+  }>;
+  readonly isAhead: (branch: string) => boolean;
+  readonly escalate: typeof escalateTicketToHuman;
+}
+
+const DEFAULT_SLICE_OPS: SliceRunnerOps = {
+  runWatched: runWatchedContainer,
+  runVerify: async (branch, imageName) => {
+    await using verifySandbox = await sandcastle.createSandbox({
+      sandbox: createDockerSandbox(imageName),
+      branch,
+    });
+    const guardRes = await verifySandbox.exec("python scripts/test_guard.py --base main");
+    if (guardRes.exitCode !== 0) {
+      return { guardExit: guardRes.exitCode, guardOut: guardRes.stdout, checkExit: 1, checkOut: "" };
+    }
+    const checkRes = await verifySandbox.exec("python scripts/check.py");
+    return {
+      guardExit: 0,
+      guardOut: guardRes.stdout,
+      checkExit: checkRes.exitCode,
+      checkOut: `${checkRes.stdout}\n${checkRes.stderr}`.trim(),
+    };
+  },
+  runPow: runSliceProofOfWork,
+  runReview: async ({ ticket, round, powVerdict, imageName }) => {
+    await using reviewSandbox = await sandcastle.createSandbox({
+      sandbox: createDockerSandbox(imageName),
+      branch: ticket.branch,
+    });
+    const review = await reviewSandbox.run({
+      name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
+      agent: createAgent("high"),
+      promptFile: "./.sandcastle/review-prompt.md",
+      promptArgs: {
+        TICKET_ID: ticket.id,
+        TICKET_TITLE: ticket.title,
+        BRANCH: ticket.branch,
+        POW_EVIDENCE: formatPowEvidenceForReviewer(powVerdict),
+      },
+      maxIterations: 1,
+    });
+    const postReviewCheck = await reviewSandbox.exec(
+      "python scripts/check.py && python scripts/adversarial_scan.py --base main",
+    );
+    return {
+      reviewStdout: review.stdout,
+      postCheckExit: postReviewCheck.exitCode,
+      postCheckOut: `${postReviewCheck.stdout}\n${postReviewCheck.stderr}`.trim(),
+    };
+  },
+  isAhead: isAheadOfHead,
+  escalate: escalateTicketToHuman,
+};
+
 export async function processTicket(
   ticket: PlannedTicket,
   cycle: number,
   ctx: SliceRuntimeContext,
+  ops: SliceRunnerOps = DEFAULT_SLICE_OPS,
 ): Promise<{ approved: boolean; decomposed: boolean }> {
   const startedAtMs = Date.now();
   mkdirSync(".sandcastle/logs", { recursive: true });
@@ -39,8 +113,10 @@ export async function processTicket(
   });
 
   // Phase A: Isolated Builder container
-  const buildRes = await runWatchedContainer({
+  const buildRes = await ops.runWatched({
     ticket,
+    cycle,
+    phase: "implement",
     name: `Implementer ${ticket.id}`,
     promptFile: "./.sandcastle/implement-prompt.md",
     promptArgs: { TICKET_ID: ticket.id, TICKET_TITLE: ticket.title, BRANCH: ticket.branch },
@@ -62,24 +138,10 @@ export async function processTicket(
       pmSummary: `Fresh Verifier container running 6 mechanical checks (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES + 1})...`,
     });
 
-    let guardExit = 0;
-    let guardOut = "";
-    let checkExit = 0;
-    let checkOut = "";
-    {
-      await using verifySandbox = await sandcastle.createSandbox({
-        sandbox: createDockerSandbox(ctx.imageName),
-        branch: ticket.branch,
-      });
-      const guardRes = await verifySandbox.exec("python scripts/test_guard.py --base main");
-      guardExit = guardRes.exitCode;
-      guardOut = guardRes.stdout;
-      if (guardExit === 0) {
-        const checkRes = await verifySandbox.exec("python scripts/check.py");
-        checkExit = checkRes.exitCode;
-        checkOut = `${checkRes.stdout}\n${checkRes.stderr}`.trim();
-      }
-    }
+    const { guardExit, guardOut, checkExit, checkOut } = await ops.runVerify(
+      ticket.branch,
+      ctx.imageName,
+    );
 
     if (guardExit !== 0) {
       tamperStrikes += 1;
@@ -89,7 +151,7 @@ export async function processTicket(
         outcome: tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES ? "blocked" : "fixed",
       });
       if (tamperStrikes >= 2 || attempt === MAX_VERIFY_RETRIES) {
-        escalateTicketToHuman(
+        ops.escalate(
           ticket.id,
           `BLOCKED by strict test/harness lock (\`scripts/test_guard.py\`, strike ${tamperStrikes}):\n\n${guardOut}`,
           ctx.dashboard,
@@ -102,8 +164,10 @@ export async function processTicket(
         pmSummary:
           "Test Guard caught unauthorized test/harness edit (strike 1/2) — booting fresh Fixer to restore locked files & fix properly...",
       });
-      const fixRes = await runWatchedContainer({
+      const fixRes = await ops.runWatched({
         ticket,
+        cycle,
+        phase: "fix",
         name: `Fixer ${ticket.id}`,
         promptFile: "./.sandcastle/fix-prompt.md",
         promptArgs: {
@@ -129,7 +193,7 @@ export async function processTicket(
       break;
     }
     if (attempt === MAX_VERIFY_RETRIES) {
-      escalateTicketToHuman(
+      ops.escalate(
         ticket.id,
         `Deterministic gate \`python scripts/check.py\` still failed after ${MAX_VERIFY_RETRIES} fresh Fixer rounds.`,
         ctx.dashboard,
@@ -141,8 +205,10 @@ export async function processTicket(
       stage: "remediating",
       pmSummary: `6-gate check failed — booting fresh Fixer container (attempt ${attempt + 1}/${MAX_VERIFY_RETRIES})...`,
     });
-    const fixRes = await runWatchedContainer({
+    const fixRes = await ops.runWatched({
       ticket,
+      cycle,
+      phase: "fix",
       name: `Fixer ${ticket.id}`,
       promptFile: "./.sandcastle/fix-prompt.md",
       promptArgs: {
@@ -160,12 +226,12 @@ export async function processTicket(
     if (!fixRes.ok) return { approved: false, decomposed: fixRes.decomposed };
   }
 
-  if (!checkPassed || !isAheadOfHead(ticket.branch)) {
+  if (!checkPassed || !ops.isAhead(ticket.branch)) {
     return { approved: false, decomposed: false };
   }
 
   // Phase C: Proof-of-Work Verifier + Fresh-context Adversarial Reviewer
-  const powVerdict = await runSliceProofOfWork({
+  const powVerdict = await ops.runPow({
     imageName: ctx.imageName,
     ticket,
     cycle,
@@ -177,36 +243,23 @@ export async function processTicket(
       pmSummary: `Fresh Adversarial Reviewer checking diff against spec & CODING_STANDARDS.md (round ${round}/${MAX_REVIEW_ROUNDS})...`,
     });
 
-    let reviewStdout = "";
-    let postCheckExit = 1;
-    let postCheckOut = "";
-    {
-      await using reviewSandbox = await sandcastle.createSandbox({
-        sandbox: createDockerSandbox(ctx.imageName),
-        branch: ticket.branch,
-      });
-      const review = await reviewSandbox.run({
-        name: `Reviewer ${ticket.id} (round ${round}/${MAX_REVIEW_ROUNDS})`,
-        agent: createAgent("high"),
-        promptFile: "./.sandcastle/review-prompt.md",
-        promptArgs: {
-          TICKET_ID: ticket.id,
-          TICKET_TITLE: ticket.title,
-          BRANCH: ticket.branch,
-          POW_EVIDENCE: formatPowEvidenceForReviewer(powVerdict),
-        },
-        maxIterations: 1,
-      });
-      reviewStdout = review.stdout;
-      const postReviewCheck = await reviewSandbox.exec(
-        "python scripts/check.py && python scripts/adversarial_scan.py --base main",
-      );
-      postCheckExit = postReviewCheck.exitCode;
-      postCheckOut = `${postReviewCheck.stdout}\n${postReviewCheck.stderr}`.trim();
-    }
-
+    const tReview = performance.now();
+    const { reviewStdout, postCheckExit, postCheckOut } = await ops.runReview({
+      ticket,
+      round,
+      powVerdict,
+      imageName: ctx.imageName,
+    });
     const verdict = parseVerdict(reviewStdout);
     if (postCheckExit === 0 && verdict?.approved) {
+      ctx.tracer.recordSpan({
+        cycle,
+        sliceId: ticket.id,
+        phase: "review",
+        outcome: "pass",
+        durationMs: performance.now() - tReview,
+        detail: verdict.summary,
+      });
       const q = parseCheckMetrics(postCheckOut);
       ctx.dashboard.recordQualityMetrics(q.coveragePercent, q.mutationScore);
       ctx.dashboard.upsertSlice(ticket.id, {
@@ -224,13 +277,21 @@ export async function processTicket(
 
     const findingText =
       verdict?.blockingIssues.join("; ") || "Reviewer raised blocking findings or check.py failed.";
+    ctx.tracer.recordSpan({
+      cycle,
+      sliceId: ticket.id,
+      phase: "review",
+      outcome: round === MAX_REVIEW_ROUNDS ? "escalated" : "fail",
+      durationMs: performance.now() - tReview,
+      detail: findingText,
+    });
     if (round === MAX_REVIEW_ROUNDS) {
       ctx.dashboard.recordChallenge(ticket.id, {
         source: "reviewer",
         finding: findingText,
         outcome: "escalated",
       });
-      escalateTicketToHuman(
+      ops.escalate(
         ticket.id,
         `Stopped at max review rounds (${MAX_REVIEW_ROUNDS}). Blocking findings: ${findingText}`,
         ctx.dashboard,
@@ -252,8 +313,10 @@ export async function processTicket(
     });
 
     const feedback = verdict?.blockingIssues.join("\n- ") || postCheckOut.slice(-3000);
-    const fixRes = await runWatchedContainer({
+    const fixRes = await ops.runWatched({
       ticket,
+      cycle,
+      phase: "fix",
       name: `Fixer ${ticket.id}`,
       promptFile: "./.sandcastle/fix-prompt.md",
       promptArgs: {
