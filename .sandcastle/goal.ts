@@ -37,6 +37,7 @@ import {
   writeGoalReceipt,
 } from "./goal-core.js";
 import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
+import { runPreflightPriorArtResearch } from "./prior-art.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
@@ -202,6 +203,19 @@ async function runGoalLoop(): Promise<void> {
     `Time cap: ${contract.maxTotalMinutes === 0 ? "UNLIMITED" : `${contract.maxTotalMinutes} min`} | ` +
       `Max stalled cycles: ${contract.maxStalledCycles} | Max gap-plan rounds: ${contract.maxGapPlanRounds}`,
   );
+
+  const preflight = await runPreflightPriorArtResearch({
+    name: contract.name,
+    slug: contract.slug,
+    specFile: contract.specFile,
+    researchDepth: contract.researchDepth,
+    skipResearchReason: contract.skipResearchReason,
+    imageName: IMAGE_NAME,
+  });
+  if (preflight.pausedForApproval) {
+    process.exitCode = 2;
+    return;
+  }
 
   let cyclesRun = 0;
   let stalledCycles = 0;

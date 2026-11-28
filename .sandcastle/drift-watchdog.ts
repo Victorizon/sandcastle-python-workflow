@@ -73,9 +73,33 @@ export interface PostRunMetrics {
   readonly completed: boolean;
 }
 
-export function parseGitNumstat(output: string): { files: number; lines: number } {
+export function classifyDiffWeight(filePath: string): number {
+  const normalized = filePath.replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (
+    normalized.startsWith("tests/") ||
+    normalized.startsWith("tests_tooling/") ||
+    normalized.startsWith("docs/") ||
+    normalized.startsWith(".scratch/") ||
+    normalized.endsWith(".test.ts") ||
+    normalized.endsWith(".spec.ts") ||
+    normalized.endsWith(".md")
+  ) {
+    return 0;
+  }
+  if (normalized.startsWith("scripts/") || normalized.startsWith(".sandcastle/")) {
+    return 0.6;
+  }
+  return 1.0;
+}
+
+export function parseGitNumstat(output: string): {
+  files: number;
+  lines: number;
+  weightedLines: number;
+} {
   let files = 0;
   let lines = 0;
+  let weightedLines = 0;
   for (const rawLine of output.split(/\r?\n/u)) {
     const trimmed = rawLine.trim();
     if (!trimmed) continue;
@@ -84,10 +108,12 @@ export function parseGitNumstat(output: string): { files: number; lines: number 
     files += 1;
     const added = parts[0] === "-" ? 0 : Number.parseInt(parts[0] ?? "0", 10);
     const deleted = parts[1] === "-" ? 0 : Number.parseInt(parts[1] ?? "0", 10);
-    if (Number.isFinite(added)) lines += added;
-    if (Number.isFinite(deleted)) lines += deleted;
+    const fileLines = (Number.isFinite(added) ? added : 0) + (Number.isFinite(deleted) ? deleted : 0);
+    lines += fileLines;
+    const filePath = parts.slice(2).join(" ");
+    weightedLines += fileLines * classifyDiffWeight(filePath);
   }
-  return { files, lines };
+  return { files, lines, weightedLines: Math.round(weightedLines) };
 }
 
 export class DriftWatchdog {

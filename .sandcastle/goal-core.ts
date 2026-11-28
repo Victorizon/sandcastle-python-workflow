@@ -10,12 +10,16 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { ResearchDepthSchema } from "./prior-art.js";
 
 export const GoalContractSchema = z.object({
   name: z.string().min(1),
   slug: z.string().regex(/^[a-z0-9-]+$/u),
   /** Optional frozen `/grill-me` Spec Contract markdown file with REQ-*, INV-*, OUT-* items. */
   specFile: z.string().min(1).optional(),
+  /** Bounded pre-flight Prior-Art Research depth (`auto` auto-classifies; `skip` requires exemption). */
+  researchDepth: ResearchDepthSchema.default("auto"),
+  skipResearchReason: z.string().min(1).optional(),
   requireAllTicketsResolved: z.boolean().default(true),
   verifyCommands: z.array(z.string().min(1)).min(1),
   /** Maximum total wall-clock minutes. Set to 0 for unlimited wall-clock time. */

@@ -100,6 +100,38 @@ test("scoreSliceConfidence assigns Spot-Check Ready cleanly and enforces hard ca
   });
   assert.equal(missingSpec.badge, "Blocked — Do Not Ship");
   assert.equal(missingSpec.status, "blocked");
+
+  // Blast-radius weighted diff: 418 total lines (255 tooling * 0.6 = 153 weighted, 163 tests * 0 = 0) -> Spot-Check Ready!
+  const weightedToolingPr = scoreSliceConfidence({
+    stage: "merged",
+    checkPassed: true,
+    coveragePercent: 100,
+    mutationScore: 93,
+    tamperBlocks: 0,
+    driftSplits: 0,
+    challengeCount: 0,
+    diffLines: 418,
+    weightedDiffLines: 153,
+    contextPercent: 30,
+  });
+  assert.equal(weightedToolingPr.score, 100);
+  assert.equal(weightedToolingPr.badge, "Spot-Check Ready");
+
+  // Large production src/ diff (420 weighted lines > 400) STILL caps at 74 Review Carefully!
+  const largeSrcRewrite = scoreSliceConfidence({
+    stage: "merged",
+    checkPassed: true,
+    coveragePercent: 100,
+    mutationScore: 95,
+    tamperBlocks: 0,
+    driftSplits: 0,
+    challengeCount: 0,
+    diffLines: 420,
+    weightedDiffLines: 420,
+    contextPercent: 30,
+  });
+  assert.equal(largeSrcRewrite.score, 74);
+  assert.equal(largeSrcRewrite.badge, "Review Carefully");
 });
 
 test("spec contract parser & deterministic pytest cross-check catch omitted IDs and hallucinated test names", () => {

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   DriftDetectedError,
   DriftWatchdog,
+  classifyDiffWeight,
   parseGitNumstat,
   parsePositiveEnvNumber,
 } from "./drift-watchdog.js";
@@ -108,10 +109,18 @@ test("detects diff explosion, file explosion, and context rot post-run", () => {
   }
 });
 
-test("parseGitNumstat sums files and added+deleted lines cleanly", () => {
-  const sample = "12\t3\tsrc/app/processors/order_triage.py\n45\t0\ttests/test_order_triage.py\n-\t-\tbinary.dat\n";
+test("parseGitNumstat sums files, raw lines, and blast-radius weighted lines cleanly", () => {
+  const sample =
+    "12\t3\tsrc/app/processors/order_triage.py\n" +
+    "100\t0\tscripts/anti_bloat_guard.py\n" +
+    "45\t0\ttests/test_order_triage.py\n" +
+    "-\t-\tbinary.dat\n";
   const parsed = parseGitNumstat(sample);
-  assert.deepEqual(parsed, { files: 3, lines: 60 });
+  assert.deepEqual(parsed, { files: 4, lines: 160, weightedLines: 75 });
+  assert.equal(classifyDiffWeight("src/app/processors/order_triage.py"), 1.0);
+  assert.equal(classifyDiffWeight(".sandcastle/confidence.ts"), 0.6);
+  assert.equal(classifyDiffWeight(".sandcastle/confidence.test.ts"), 0);
+  assert.equal(classifyDiffWeight("tests_tooling/test_anti_bloat_guard.py"), 0);
 });
 
 test("aborts on 2-step ping-pong oscillation thrash loop (edit -> pytest -> edit -> pytest)", () => {

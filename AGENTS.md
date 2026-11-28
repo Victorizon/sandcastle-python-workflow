@@ -20,6 +20,7 @@ Single-context repo (`GLOSSARY.md` + `docs/adr/`). Read `GLOSSARY.md` and releva
 
 - **Fresh subagent contexts:** Always start every subagent with a fresh context window; never fork the parent conversation onto a subagent.
 - **Bounded grilling:** During `$grill-me` or `$grill-with-docs`, ask at most 3 focused question batches (max 5 questions per batch). Stop as soon as design branches are resolved.
+- **Mandatory post-grill prior-art gate:** After `$grill-me` / `$grill-with-docs`, always auto-recommend a `researchDepth` (`fast | standard | deep | deep-synthesis`) for user confirmation/override; skipping is allowed ONLY for bug fixes, repo-context-only changes, or small internal refactors (with a 1-line reason in the spec).
 - **Explicit skill boundaries:** Do not auto-invoke `$diagnosing-bugs` for simple factual questions or code explanations; run it only when investigating an actual defect, failing test, or regression.
 - **2-strike retry ceiling:** In interactive sessions, if the same verification gate (`python scripts/check.py`) fails twice after two distinct fix attempts, stop immediately, summarize the blocker, set the ticket status to `ready-for-human`, and hand control back to the human. Never loop indefinitely.
 - **Effort discipline:** Default to `medium` reasoning effort. Escalate to `high` only for `$code-review`, web research, or complex debugging.

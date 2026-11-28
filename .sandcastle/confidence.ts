@@ -41,6 +41,8 @@ export interface SliceConfidenceInput {
   readonly driftSplits: number;
   readonly challengeCount: number;
   readonly diffLines: number;
+  /** Optional blast-radius weighted diff lines (src=1.0x, tooling=0.6x, tests/docs=0x). */
+  readonly weightedDiffLines?: number;
   readonly contextPercent: number;
   readonly contextTokens?: number;
   readonly missingSpecItems?: number;
@@ -216,13 +218,15 @@ export function scoreSliceConfidence(input: SliceConfidenceInput): ConfidenceAss
     reasons.push(`Required ${input.challengeCount} adversarial fix round(s).`);
   }
 
-  if (input.diffLines > 400) {
+  const effectiveDiffLines = input.weightedDiffLines ?? input.diffLines;
+  const diffLabel = input.weightedDiffLines !== undefined ? "weighted lines" : "lines";
+  if (effectiveDiffLines > 400) {
     cap = Math.min(cap, 74);
     score -= 10;
-    reasons.push(`Large diff (${input.diffLines} lines > 400) increases review risk.`);
-  } else if (input.diffLines > 250) {
+    reasons.push(`Large diff (${effectiveDiffLines} ${diffLabel} > 400) increases review risk.`);
+  } else if (effectiveDiffLines > 250) {
     score -= 4;
-    reasons.push(`Moderate diff size (${input.diffLines} lines).`);
+    reasons.push(`Moderate diff size (${effectiveDiffLines} ${diffLabel}).`);
   }
 
   if (input.contextTokens !== undefined && input.contextTokens >= 130_000) {
