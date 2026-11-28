@@ -20,6 +20,13 @@ Only work on this single ticket. Do not touch unrelated files or close the ticke
 
 </recent-commits>
 
+# CONTAINER TOOLKIT (PRE-INSTALLED)
+
+- `fd <name>` — instant `.gitignore`-aware file discovery (prefer over `find`).
+- `rg <pattern>` — fast regex search across source files (prefer over `grep -R`).
+- `ast-grep --pattern '<code-shape>' --lang python` — syntax-aware AST search & safe multi-file refactors.
+- `pytest --testmon` — fast inner-loop TDD running only tests affected by your edits (still run full `python scripts/check.py` before committing).
+
 # EXECUTION RULES
 
 1. Read `GLOSSARY.md` and `docs/adr/` first so domain terms and invariants match.

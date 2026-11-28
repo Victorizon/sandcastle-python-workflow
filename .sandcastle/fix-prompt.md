@@ -24,6 +24,12 @@ An earlier implementation pass was challenged by **{{FAILURE_SOURCE}}**. Fix eve
 
 </challenge-findings>
 
+# CONTAINER TOOLKIT (PRE-INSTALLED)
+
+- `fd <name>` / `rg <pattern>` — instant `.gitignore`-aware file & text search.
+- `ast-grep --pattern '<code-shape>' --lang python` — syntax-aware AST search & safe refactors.
+- `pytest --testmon` — fast affected-only test feedback before running full `python scripts/check.py`.
+
 # EXECUTION RULES
 
 1. If `test_guard.py` reported modified/deleted tests, fixtures, or locked harness files (`scripts/*`, `pyproject.toml`, `tests/conftest.py`), restore those files cleanly from `main` (`git checkout main -- <file>`) and solve the problem properly in production code + additive tests.
