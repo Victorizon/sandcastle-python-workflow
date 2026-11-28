@@ -21,8 +21,9 @@ git checkout -b chore/adopt-workflow
 
 ```bash
 # 2. Copy ONLY the workflow toolbox in (skips existing files, removes template baselines)
-cp -rn "$TOOLBOX/.sandcastle" "$TOOLBOX/scripts" "$TOOLBOX/docs" "$TOOLBOX/.agents" "$TOOLBOX/.github" . \
-  && cp -n "$TOOLBOX/AGENTS.md" "$TOOLBOX/.pre-commit-config.yaml" "$TOOLBOX/requirements-dev.txt" "$TOOLBOX/pyproject.toml" . \
+cp -rn "$TOOLBOX/.sandcastle" "$TOOLBOX/scripts" "$TOOLBOX/docs" "$TOOLBOX/.agents" "$TOOLBOX/.github" "$TOOLBOX/.out-of-scope" . \
+  && cp -n "$TOOLBOX/AGENTS.md" "$TOOLBOX/GLOSSARY.md" "$TOOLBOX/CODING_STANDARDS.md" "$TOOLBOX/LEGACY_REFACTORING_PLAYBOOK.md" \
+           "$TOOLBOX/.pre-commit-config.yaml" "$TOOLBOX/requirements-dev.txt" "$TOOLBOX/pyproject.toml" . \
   && rm -f scripts/ratchet-baseline.json scripts/bloat-baseline.json scripts/coverage-baseline.json
 ```
 
@@ -39,7 +40,22 @@ git commit -m "chore: adopt sandcastle workflow with Day-1 baselines"
 code .
 ```
 
-> **Note on repo layout:** Repos without a `src/` package (e.g., notebook-only or flat-script repos) are supported automatically — `setup.py` skips editable `-e .` install, and `check.py` / CI skip `src/`-only gates (`lint-imports`, `--cov=src`, `mutation_check.py`) while still enforcing formatting, `ratchet.py`, `pytest`, and `test_guard.py`.
+> **Note on repo layout & domain docs:**
+> - Repos without a `src/` package (e.g., notebook-only or flat-script repos) are supported automatically — `setup.py` skips editable `-e .` install, and `check.py` / CI skip `src/`-only gates (`lint-imports`, `--cov=src`, `mutation_check.py`) while still enforcing formatting, `ratchet.py`, `pytest`, and `test_guard.py` (including `unittest.TestCase` suites).
+> - After onboarding, update `GLOSSARY.md` with your own domain terms so agents use your ubiquitous language.
+>
+> **Merging existing `ruff.toml` & `detect-secrets` config (if your repo already has them):**
+> - **Standalone `ruff.toml`:** Ruff prefers `ruff.toml` over `pyproject.toml`. Add this snippet to your existing `ruff.toml` so workflow CLI scripts pass Ruff's subprocess checks without weakening rules on your app code:
+>   ```toml
+>   [lint.per-file-ignores]
+>   "scripts/*.py" = ["S603", "S607"]
+>   "tests_tooling/*.py" = ["S101", "S603", "S607"]
+>   ```
+> - **Existing `.secrets.baseline` (`detect-secrets`):** Copied TypeScript unit tests (`.sandcastle/*.test.ts`) include synthetic high-entropy test hashes (e.g. fake git SHAs / synthetic token patterns). Audit and refresh your baseline for those synthetic test fixtures rather than disabling secret scanning:
+>   ```bash
+>   detect-secrets scan --update .secrets.baseline
+>   detect-secrets audit .secrets.baseline   # mark only synthetic .sandcastle/*.test.ts fixtures as non-secrets
+>   ```
 >
 > **Next in VS Code (Codex):**
 > - Optional legacy onboarding: `.venv/bin/python scripts/adr_miner.py mine` → run **`$grill-me`** over `docs/adr/drafts/*.md` → approve real ADRs (`python scripts/adr_miner.py approve <draft>`).

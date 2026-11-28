@@ -56,10 +56,47 @@ def _is_trivial_assert(node: ast.Assert) -> bool:
     return False
 
 
+def _is_unittest_assert_call(node: ast.Call) -> bool:
+    """True for standard `unittest.TestCase` assertion calls like `self.assertEqual(...)`."""
+    return (
+        isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "self"
+        and node.func.attr.startswith("assert")
+    )
+
+
+def _is_trivial_unittest_assert(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute) or not node.args:
+        return False
+    method = node.func.attr
+    if (
+        method == "assertTrue"
+        and isinstance(node.args[0], ast.Constant)
+        and bool(node.args[0].value)
+    ):
+        return True
+    if (
+        method == "assertFalse"
+        and isinstance(node.args[0], ast.Constant)
+        and not bool(node.args[0].value)
+    ):
+        return True
+    if method == "assertEqual" and len(node.args) >= 2:
+        left, right = node.args[0], node.args[1]
+        if ast.dump(left) == ast.dump(right):
+            return True
+        if _is_constant_expr(left) and _is_constant_expr(right):
+            return True
+    return False
+
+
 def _has_assert_inside(nodes: list[ast.stmt]) -> bool:
     for stmt in nodes:
         for child in ast.walk(stmt):
             if isinstance(child, ast.Assert):
+                return True
+            if isinstance(child, ast.Call) and _is_unittest_assert_call(child):
                 return True
     return False
 
@@ -203,7 +240,12 @@ def analyze_test_source(source: str) -> dict[str, TestFunctionStats]:
                 if call_text.endswith("pytest.raises"):
                     asserts += 1
                     assertions.append(ast.unparse(child))
-                if call_text.endswith(("pytest.skip", "pytest.xfail")):
+                elif _is_unittest_assert_call(child):
+                    asserts += 1
+                    assertions.append(ast.unparse(child))
+                    if _is_trivial_unittest_assert(child):
+                        has_trivial = True
+                if call_text.endswith(("pytest.skip", "pytest.xfail", "self.skipTest")):
                     has_skip = True
         stats[node.name] = TestFunctionStats(
             name=node.name,
