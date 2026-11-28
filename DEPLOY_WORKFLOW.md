@@ -19,8 +19,10 @@ python scripts/setup.py
 # Useful flags:
 #   --skip-docker      Skip Docker daemon check & image build
 #   --skip-node        Python-only setup (skip .sandcastle npm install)
-#   --init-baselines   Capture initial ratchet baseline from an existing repo
+#   --init-baselines   Capture initial ratchet & coverage baselines from an existing repo
 ```
+
+> **Onboarding an existing repo with legacy quirks?** Run `python scripts/adr_miner.py mine` (with optional `--jira-export <file.json|csv>`), then run a dedicated **`$grill-me` session** over `docs/adr/drafts/*.md` to reconcile nuances before promoting accepted ADRs (`python scripts/adr_miner.py approve <draft>`). Accepted ADRs with `Applies-to:` globs are automatically enforced in code review.
 
 If you prefer manual step-by-step setup, follow Steps 1–4 below.
 

@@ -377,9 +377,13 @@ def _run_install_pipeline(args: argparse.Namespace) -> bool:
             return False
         _capture_coverage_baseline(py_bin, ROOT)
         print(
-            "\n[INFO] Baselines initialized for this existing repo. Commit "
-            "`scripts/ratchet-baseline.json` and `scripts/coverage-baseline.json`, "
-            "then run `python scripts/verify_workflow_ready.py`."
+            "\n[INFO] Baselines initialized for this existing repo. Next steps:\n"
+            "  1. Commit `scripts/ratchet-baseline.json` and `scripts/coverage-baseline.json`.\n"
+            "  2. Mine legacy quirks into draft ADRs: `python scripts/adr_miner.py mine` "
+            "(optional `--jira-export <file.json|csv>`).\n"
+            "  3. Run a dedicated `$grill-me` session over `docs/adr/drafts/*.md` to reconcile "
+            "nuances, then `python scripts/adr_miner.py approve|reject <draft>`.\n"
+            "  4. Verify readiness: `python scripts/verify_workflow_ready.py`."
         )
         return True
 
@@ -435,7 +439,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nSETUP COMPLETE. Next steps:")
     print("  1. Inspect tickets:  python scripts/local_tracker.py board")
-    print("  2. Run Sandcastle:   npm --prefix .sandcastle run factory")
+    print("  2. Existing repos:   python scripts/adr_miner.py mine (then `$grill-me` drafts)")
+    print("  3. Run Sandcastle:   npm --prefix .sandcastle run factory")
     return 0
 
 

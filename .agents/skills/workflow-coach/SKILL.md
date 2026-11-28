@@ -18,6 +18,7 @@ npm --prefix .sandcastle run coach -- --context "<user intent>"
 Match the user's current goal to the right tool from `docs/WORKFLOW_GUIDE.html` (and include at most **one** concise "loading-screen" tip matched to their current task — never overbearing):
 
 - **First-time setup or machine doctor:** `python scripts/setup.py --check-only` then `python scripts/setup.py` (or `--init-baselines` on an existing repo).
+- **Onboarding an existing repo with legacy quirks:** Run `python scripts/adr_miner.py mine [--jira-export <file>]`, then run a dedicated **`$grill-me` ADR Reconciliation session** over `docs/adr/drafts/*.md` to resolve nuances and run `approve` or `reject` (approved ADRs auto-enforce via `Applies-to:`).
 - **Post-run autopsy / timings / merge verdicts:** `npm --prefix .sandcastle run diagnose` (and `SANDCASTLE_VERBOSE=1` for verbatim per-phase logs).
 - **Anti-bloat & security/symbolic scan:** `python scripts/anti_bloat_guard.py --full` and `python scripts/adversarial_scan.py --base main`.
 

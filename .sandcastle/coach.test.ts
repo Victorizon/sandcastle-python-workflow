@@ -110,4 +110,7 @@ test("pickContextualTip matches concise loading-screen tips to prompt context an
   const tip1 = pickContextualTip(undefined, 1);
   assert.notEqual(tip0, tip1);
   assert.ok(tip0.length < 220, "Loading-screen tip should stay concise and non-overbearing");
+
+  const adrNudges = buildCoachNudges(baseSignals({ pendingAdrDrafts: 2 }));
+  assert.ok(adrNudges.some((n) => n.title.includes("Reconcile 2 mined ADR draft(s)") && n.detail.includes("$grill-me")));
 });
