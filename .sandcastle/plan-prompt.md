@@ -4,7 +4,7 @@ Here are the open `ready-for-agent` tickets from the local tracker:
 
 <tickets-json>
 
-!`python scripts/local_tracker.py list --status ready-for-agent --json`
+!`python scripts/local_tracker.py list --status ready-for-agent --unblocked-only --summary-only --limit 15 --json`
 
 </tickets-json>
 

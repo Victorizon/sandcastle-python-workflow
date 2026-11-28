@@ -15,7 +15,7 @@ import { formatEndOfRunFooter } from "./coach.js";
 import { computeAgentTrustScore, loadHumanRatings, scoreFactoryRunConfidence } from "./confidence.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { loadVerifiedRunHistory, recordFactoryRun } from "./run-history.js";
-import { DriftDetectedError, DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
+import { DriftDetectedError, DriftWatchdog, parseGitNumstat, parsePositiveEnvNumber } from "./drift-watchdog.js";
 import {
   REPO_MUTATION_LOCK, type TrackerTicketSnapshot, acquireRunLock,
   assertCleanGitWorktree, commitScratchState, rollbackToCommitClean, validatePlannedTicketsAgainstTracker,
@@ -26,7 +26,7 @@ const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = resolvePythonBin();
 
 // Hard numeric caps — guarantees the pipeline can NEVER enter an endless loop.
-const MAX_OUTER_CYCLES = 6;
+const MAX_OUTER_CYCLES = Math.min(100, Math.floor(parsePositiveEnvNumber(process.env["SANDCASTLE_MAX_CYCLES"], 6)));
 const MAX_PARALLEL = 2;
 const MAX_IMPLEMENT_ITERATIONS = 4;
 const MAX_VERIFY_RETRIES = 2;

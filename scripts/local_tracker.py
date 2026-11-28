@@ -101,6 +101,7 @@ def discover_tickets(root: Path = ROOT) -> list[Ticket]:
                     body=text,
                 )
             )
+    tickets.sort(key=lambda t: (t.feature, t.number))
     return tickets
 
 
@@ -202,18 +203,21 @@ def cmd_board(root: Path = ROOT) -> int:
     return 0
 
 
-def cmd_list(status_filter: str | None, as_json: bool, root: Path = ROOT) -> int:
-    tickets = discover_tickets(root)
+def cmd_list(args: argparse.Namespace) -> int:
+    tickets = discover_tickets(args.root)
     by_id = {t.id: t for t in tickets}
-    filtered = [t for t in tickets if status_filter is None or t.status == status_filter]
-    if as_json:
-        payload = [
-            {
-                **asdict(t),
-                "open_blockers": _open_blockers(t, by_id),
-            }
-            for t in filtered
-        ]
+    filtered = [t for t in tickets if args.status is None or t.status == args.status]
+    if args.unblocked_only:
+        filtered = [t for t in filtered if not _open_blockers(t, by_id)]
+    if args.limit is not None and args.limit > 0:
+        filtered = filtered[: args.limit]
+    if args.json:
+        payload: list[dict[str, Any]] = []
+        for t in filtered:
+            item: dict[str, Any] = {**asdict(t), "open_blockers": _open_blockers(t, by_id)}
+            if args.summary_only:
+                item.pop("body", None)
+            payload.append(item)
         print(json.dumps(payload, indent=2))
         return 0
     for t in filtered:
@@ -387,6 +391,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_list = sub.add_parser("list", help="List tickets")
     p_list.add_argument("--status", default=None, help="Filter by status label")
     p_list.add_argument("--json", action="store_true", help="Output JSON")
+    p_list.add_argument("--summary-only", action="store_true", help="Omit full markdown bodies")
+    p_list.add_argument(
+        "--unblocked-only", action="store_true", help="Only tickets with 0 blockers"
+    )
+    p_list.add_argument("--limit", type=int, default=None, help="Max tickets to return")
 
     p_view = sub.add_parser("view", help="View ticket and parent spec")
     p_view.add_argument("ticket_id", help="Ticket ID (e.g. workflow-smoke-test/01)")
@@ -418,7 +427,7 @@ def main() -> int:
     root: Path = args.root
     dispatch = {
         "board": lambda: cmd_board(root),
-        "list": lambda: cmd_list(args.status, args.json, root),
+        "list": lambda: cmd_list(args),
         "view": lambda: cmd_view(args.ticket_id, root),
         "set-status": lambda: cmd_set_status(args.ticket_id, args.status, root),
         "comment": lambda: cmd_comment(args.ticket_id, args.body, root),
