@@ -21,15 +21,25 @@ import {
   parseVerdict,
 } from "./slice-container.js";
 
-export async function mergeAndVerifyBatch(
-  readyToMerge: readonly PlannedTicket[],
-  cycle: number,
-  ctx: SliceRuntimeContext,
-): Promise<boolean> {
-  const preMergeSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  ctx.dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
-  const tMerge = performance.now();
-  try {
+export interface MergeGateOps {
+  readonly getHeadSha: () => string;
+  readonly runMerger: (readyToMerge: readonly PlannedTicket[], cycle: number, ctx: SliceRuntimeContext) => Promise<void>;
+  readonly runHostChecks: (preMergeSha: string, pythonBin: string) => boolean;
+  readonly runMergePow: typeof runMergeProofOfWork;
+  readonly runCrossSliceAudit: (
+    preMergeSha: string,
+    readyToMerge: readonly PlannedTicket[],
+    powEvidence: string,
+    cycle: number,
+    ctx: SliceRuntimeContext,
+  ) => Promise<string>;
+  readonly rollback: (sha: string) => void;
+  readonly escalate: typeof escalateTicketToHuman;
+}
+
+const DEFAULT_MERGE_OPS: MergeGateOps = {
+  getHeadSha: () => execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  runMerger: async (readyToMerge, cycle, ctx) => {
     await sandcastle.run({
       sandbox: createDockerSandbox(ctx.imageName),
       name: "Merger",
@@ -43,8 +53,57 @@ export async function mergeAndVerifyBatch(
         TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
       },
     });
+  },
+  runHostChecks: (preMergeSha, pythonBin) => {
+    try {
+      execFileSync(pythonBin, ["scripts/check.py"], { stdio: "inherit" });
+      execFileSync(pythonBin, ["scripts/test_guard.py", "--base", preMergeSha], { stdio: "inherit" });
+      execFileSync(pythonBin, ["scripts/adversarial_scan.py", "--base", preMergeSha], { stdio: "inherit" });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  runMergePow: runMergeProofOfWork,
+  runCrossSliceAudit: async (preMergeSha, readyToMerge, powEvidence, cycle, ctx) => {
+    const mergeReview = await withTransientRetry(
+      () =>
+        sandcastle.run({
+          sandbox: createDockerSandbox(ctx.imageName),
+          name: "Post-Merge Cross-Slice Auditor",
+          agent: createAgent("high"),
+          logging: ctx.tracer.sandboxLogging(cycle, "post_merge_audit"),
+          prompt: [
+            `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
+            ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
+            `Cross-Slice Proof-of-Work Evidence:\n${powEvidence}`,
+            `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
+            `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
+            `Then output <promise>COMPLETE</promise>.`,
+          ].join("\n"),
+          maxIterations: 1,
+        }),
+      { label: "Post-Merge Cross-Slice Auditor" },
+    );
+    return mergeReview.stdout;
+  },
+  rollback: rollbackToCommitClean,
+  escalate: escalateTicketToHuman,
+};
+
+export async function mergeAndVerifyBatch(
+  readyToMerge: readonly PlannedTicket[],
+  cycle: number,
+  ctx: SliceRuntimeContext,
+  ops: MergeGateOps = DEFAULT_MERGE_OPS,
+): Promise<boolean> {
+  const preMergeSha = ops.getHeadSha();
+  ctx.dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
+  const tMerge = performance.now();
+  try {
+    await ops.runMerger(readyToMerge, cycle, ctx);
   } catch (mergeErr) {
-    rollbackToCommitClean(preMergeSha);
+    ops.rollback(preMergeSha);
     ctx.tracer.recordSpan({
       cycle,
       phase: "merge",
@@ -64,14 +123,7 @@ export async function mergeAndVerifyBatch(
 
   // Deterministic host-side verification after Merger
   const tHost = performance.now();
-  let hostCheckPassed = true;
-  try {
-    execFileSync(ctx.pythonBin, ["scripts/check.py"], { stdio: "inherit" });
-    execFileSync(ctx.pythonBin, ["scripts/test_guard.py", "--base", preMergeSha], { stdio: "inherit" });
-    execFileSync(ctx.pythonBin, ["scripts/adversarial_scan.py", "--base", preMergeSha], { stdio: "inherit" });
-  } catch {
-    hostCheckPassed = false;
-  }
+  const hostCheckPassed = ops.runHostChecks(preMergeSha, ctx.pythonBin);
   ctx.tracer.recordSpan({
     cycle,
     phase: "host_check",
@@ -85,7 +137,7 @@ export async function mergeAndVerifyBatch(
   // Optional multi-branch cross-slice PoW + Auditor
   let multiMergeConflictIssue: string | null = null;
   if (hostCheckPassed && readyToMerge.length >= 2) {
-    const mergePow = await runMergeProofOfWork({
+    const mergePow = await ops.runMergePow({
       imageName: ctx.imageName,
       preMergeSha,
       tickets: [...readyToMerge],
@@ -93,26 +145,14 @@ export async function mergeAndVerifyBatch(
       tracer: ctx.tracer,
     });
     const tAudit = performance.now();
-    const mergeReview = await withTransientRetry(
-      () =>
-        sandcastle.run({
-          sandbox: createDockerSandbox(ctx.imageName),
-          name: "Post-Merge Cross-Slice Auditor",
-          agent: createAgent("high"),
-          logging: ctx.tracer.sandboxLogging(cycle, "post_merge_audit"),
-          prompt: [
-            `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
-            ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
-            `Cross-Slice Proof-of-Work Evidence:\n${formatPowEvidenceForReviewer(mergePow)}`,
-            `Check ONLY whether merging these branches dropped, contradicted, or weakened any behavior from either ticket.`,
-            `Do NOT edit files. Output JSON inside <verdict> tags: {"approved": true|false, "severity": "none"|"minor"|"blocking", "summary": "...", "blockingIssues": []}`,
-            `Then output <promise>COMPLETE</promise>.`,
-          ].join("\n"),
-          maxIterations: 1,
-        }),
-      { label: "Post-Merge Cross-Slice Auditor" },
+    const auditStdout = await ops.runCrossSliceAudit(
+      preMergeSha,
+      readyToMerge,
+      formatPowEvidenceForReviewer(mergePow),
+      cycle,
+      ctx,
     );
-    const mergeVerdict = parseVerdict(mergeReview.stdout);
+    const mergeVerdict = parseVerdict(auditStdout);
     if (!mergeVerdict?.approved) {
       multiMergeConflictIssue =
         mergeVerdict?.blockingIssues.join("; ") ||
@@ -129,7 +169,7 @@ export async function mergeAndVerifyBatch(
 
   if (!hostCheckPassed || multiMergeConflictIssue !== null) {
     try {
-      rollbackToCommitClean(preMergeSha);
+      ops.rollback(preMergeSha);
     } catch (err) {
       console.error(`Failed to roll back main to ${preMergeSha}:`, err);
     }
@@ -137,7 +177,7 @@ export async function mergeAndVerifyBatch(
       ? `Post-merge cross-slice audit blocked batch (main atomically rolled back to ${preMergeSha.slice(0, 7)}): ${multiMergeConflictIssue}`
       : `Host post-merge \`python scripts/check.py\` FAILED (main atomically rolled back to ${preMergeSha.slice(0, 7)}).`;
     for (const t of readyToMerge) {
-      escalateTicketToHuman(t.id, reason, ctx.dashboard, ctx.pythonBin);
+      ops.escalate(t.id, reason, ctx.dashboard, ctx.pythonBin);
     }
     ctx.dashboard.setRunStatus(
       "blocked",
