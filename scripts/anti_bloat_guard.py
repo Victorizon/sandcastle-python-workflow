@@ -18,11 +18,13 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import cast
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_MAX_LINES = 450
+BASELINE_REL_PATH = Path("scripts") / "bloat-baseline.json"
 
-# Monotonic ceilings for pre-existing larger files (may only shrink over time).
+# Fallback ceilings when `scripts/bloat-baseline.json` has not been initialized yet.
 GRANDFATHERED_LINE_CAPS: dict[str, int] = {
     ".sandcastle/run.ts": 920,
     ".sandcastle/confidence.ts": 740,
@@ -37,6 +39,13 @@ class BloatFinding:
     category: str
     file: str
     detail: str
+
+
+@dataclass(frozen=True)
+class BloatBaseline:
+    max_lines: int
+    file_line_caps: dict[str, int]
+    vulture_findings: int
 
 
 def _resolve_py_tool(name: str) -> str:
@@ -65,24 +74,99 @@ def _resolve_sandcastle_bin(root: Path, name: str) -> str:
     return found
 
 
-def check_oversized_files(
-    root: Path = ROOT,
-    max_lines: int = DEFAULT_MAX_LINES,
-) -> list[BloatFinding]:
+def _iter_size_targets(root: Path) -> list[Path]:
+    targets: list[Path] = []
+    src_dir = root / "src"
     py_dir = root / "scripts"
     ts_dir = root / ".sandcastle"
-    targets: list[Path] = []
+    if src_dir.exists():
+        targets.extend(sorted(src_dir.rglob("*.py")))
     if py_dir.exists():
         targets.extend(sorted(py_dir.glob("*.py")))
     if ts_dir.exists():
         targets.extend(sorted(p for p in ts_dir.glob("*.ts") if not p.name.endswith(".test.ts")))
+    return targets
 
-    findings: list[BloatFinding] = []
-    use_grandfathered = max_lines == DEFAULT_MAX_LINES
-    for path in targets:
+
+def load_bloat_baseline(root: Path = ROOT) -> BloatBaseline | None:
+    path = root / BASELINE_REL_PATH
+    if not path.is_file():
+        return None
+    raw: object = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        return None
+    data = cast("dict[str, object]", raw)
+    caps: dict[str, int] = {}
+    caps_raw = data.get("file_line_caps", {})
+    if isinstance(caps_raw, dict):
+        for k, v in cast("dict[object, object]", caps_raw).items():
+            if isinstance(k, str) and isinstance(v, int):
+                caps[k] = v
+    max_lines_raw = data.get("max_lines", DEFAULT_MAX_LINES)
+    vulture_raw = data.get("vulture_findings", 0)
+    return BloatBaseline(
+        max_lines=max_lines_raw if isinstance(max_lines_raw, int) else DEFAULT_MAX_LINES,
+        file_line_caps=caps,
+        vulture_findings=vulture_raw if isinstance(vulture_raw, int) else 0,
+    )
+
+
+def _run_vulture_lines(root: Path) -> list[str]:
+    py_targets = [d for d in ("src", "scripts") if (root / d).exists()]
+    if not py_targets:
+        return []
+    proc = subprocess.run(
+        [_resolve_py_tool("vulture"), *py_targets, "--min-confidence", "80"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode == 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def init_bloat_baseline(root: Path = ROOT, max_lines: int = DEFAULT_MAX_LINES) -> BloatBaseline:
+    file_line_caps: dict[str, int] = {}
+    for path in _iter_size_targets(root):
         rel = path.relative_to(root).as_posix()
         line_count = len(path.read_text(encoding="utf-8").splitlines())
-        limit = GRANDFATHERED_LINE_CAPS.get(rel, max_lines) if use_grandfathered else max_lines
+        if line_count > max_lines:
+            file_line_caps[rel] = line_count
+
+    vulture_count = len(_run_vulture_lines(root))
+    baseline = BloatBaseline(
+        max_lines=max_lines,
+        file_line_caps=file_line_caps,
+        vulture_findings=vulture_count,
+    )
+    baseline_path = root / BASELINE_REL_PATH
+    baseline_path.parent.mkdir(parents=True, exist_ok=True)
+    baseline_path.write_text(json.dumps(asdict(baseline), indent=2) + "\n", encoding="utf-8")
+    return baseline
+
+
+def check_oversized_files(
+    root: Path = ROOT,
+    max_lines: int = DEFAULT_MAX_LINES,
+    baseline: BloatBaseline | None = None,
+) -> list[BloatFinding]:
+    active_baseline = baseline if baseline is not None else load_bloat_baseline(root)
+    if active_baseline is not None:
+        caps = active_baseline.file_line_caps
+        use_caps = max_lines == active_baseline.max_lines
+    else:
+        caps = GRANDFATHERED_LINE_CAPS
+        use_caps = max_lines == DEFAULT_MAX_LINES
+
+    findings: list[BloatFinding] = []
+    for path in _iter_size_targets(root):
+        rel = path.relative_to(root).as_posix()
+        line_count = len(path.read_text(encoding="utf-8").splitlines())
+        limit = caps.get(rel, max_lines) if use_caps else max_lines
         if line_count > limit:
             findings.append(
                 BloatFinding(
@@ -117,17 +201,26 @@ def skipped_node_analyzers(root: Path = ROOT) -> list[str]:
     return ["knip", "jscpd"]
 
 
-def run_external_analyzers(root: Path = ROOT) -> list[BloatFinding]:
+def run_external_analyzers(
+    root: Path = ROOT,
+    baseline: BloatBaseline | None = None,
+) -> list[BloatFinding]:
+    active_baseline = baseline if baseline is not None else load_bloat_baseline(root)
+    vulture_cap = active_baseline.vulture_findings if active_baseline is not None else 0
+
     findings: list[BloatFinding] = []
-    py_targets = [d for d in ("src", "scripts") if (root / d).exists()]
-    if py_targets:
-        vulture_hit = _run_external_gate(
-            "vulture-dead-code",
-            [_resolve_py_tool("vulture"), *py_targets, "--min-confidence", "80"],
-            root,
+    vulture_lines = _run_vulture_lines(root)
+    if len(vulture_lines) > vulture_cap:
+        preview = "\n".join(vulture_lines[:8])
+        findings.append(
+            BloatFinding(
+                category="vulture-dead-code",
+                file=".",
+                detail=(
+                    f"{len(vulture_lines)} finding(s) exceeds baseline of {vulture_cap}:\n{preview}"
+                ),
+            )
         )
-        if vulture_hit:
-            findings.append(vulture_hit)
 
     if (root / ".sandcastle" / "package.json").exists() and (
         root / ".sandcastle" / "node_modules"
@@ -175,6 +268,11 @@ def main() -> int:
         help=f"Maximum lines per file (default: {DEFAULT_MAX_LINES})",
     )
     parser.add_argument(
+        "--init",
+        action="store_true",
+        help="Snapshot existing oversized files and vulture count into scripts/bloat-baseline.json",
+    )
+    parser.add_argument(
         "--full",
         action="store_true",
         help="Also run vulture (Python dead code), knip (TS dead code), and jscpd (clones)",
@@ -182,9 +280,19 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="Emit findings as JSON")
     args = parser.parse_args()
 
-    findings = check_oversized_files(root=args.root, max_lines=args.max_lines)
+    if args.init:
+        baseline = init_bloat_baseline(root=args.root, max_lines=args.max_lines)
+        print(
+            f"Initialized {BASELINE_REL_PATH.as_posix()}: "
+            f"{len(baseline.file_line_caps)} grandfathered file(s), "
+            f"{baseline.vulture_findings} baseline vulture finding(s)."
+        )
+        return 0
+
+    baseline = load_bloat_baseline(args.root)
+    findings = check_oversized_files(root=args.root, max_lines=args.max_lines, baseline=baseline)
     if args.full:
-        findings.extend(run_external_analyzers(root=args.root))
+        findings.extend(run_external_analyzers(root=args.root, baseline=baseline))
     skipped = skipped_node_analyzers(args.root) if args.full else []
     if skipped:
         print(

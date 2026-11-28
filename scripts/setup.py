@@ -375,14 +375,20 @@ def _run_install_pipeline(args: argparse.Namespace) -> bool:
             "Initialize ratchet baseline", [str(py_bin), "scripts/ratchet.py", "--init"], cwd=ROOT
         ):
             return False
+        if not _run_step(
+            "Initialize bloat baseline",
+            [str(py_bin), "scripts/anti_bloat_guard.py", "--init"],
+            cwd=ROOT,
+        ):
+            return False
         _capture_coverage_baseline(py_bin, ROOT)
         print(
             "\n[INFO] Baselines initialized for this existing repo. Next steps:\n"
-            "  1. Commit `scripts/ratchet-baseline.json` and `scripts/coverage-baseline.json`.\n"
-            "  2. Mine legacy quirks into draft ADRs: `python scripts/adr_miner.py mine` "
-            "(optional `--jira-export <file.json|csv>`).\n"
-            "  3. Run a dedicated `$grill-me` session over `docs/adr/drafts/*.md` to reconcile "
-            "nuances, then `python scripts/adr_miner.py approve|reject <draft>`.\n"
+            "  1. Commit `scripts/*-baseline.json` (ratchet, bloat, coverage).\n"
+            "  2. Mine legacy quirks: `python scripts/adr_miner.py mine` "
+            "(optional `--jira-export <file>`).\n"
+            "  3. Run `$grill-me` over `docs/adr/drafts/*.md`, then "
+            "`python scripts/adr_miner.py approve|reject <draft>`.\n"
             "  4. Verify readiness: `python scripts/verify_workflow_ready.py`."
         )
         return True
@@ -397,25 +403,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Idempotent installer & doctor for sandcastle-python-workflow"
     )
-    parser.add_argument(
-        "--check-only", action="store_true", help="Run preflight checks only without making changes"
-    )
-    parser.add_argument(
-        "--skip-node", action="store_true", help="Skip Node.js / .sandcastle npm install"
-    )
-    parser.add_argument(
-        "--skip-docker", action="store_true", help="Skip Docker daemon check & image build"
-    )
-    parser.add_argument(
-        "--skip-hooks", action="store_true", help="Skip installing git pre-commit/pre-push hooks"
-    )
-    parser.add_argument(
-        "--rebuild-docker", action="store_true", help="Force rebuild the Sandcastle Docker image"
-    )
+    parser.add_argument("--check-only", action="store_true", help="Run preflight checks only")
+    parser.add_argument("--skip-node", action="store_true", help="Skip .sandcastle npm install")
+    parser.add_argument("--skip-docker", action="store_true", help="Skip Docker check & build")
+    parser.add_argument("--skip-hooks", action="store_true", help="Skip git hook installation")
+    parser.add_argument("--rebuild-docker", action="store_true", help="Force Docker rebuild")
     parser.add_argument(
         "--init-baselines",
         action="store_true",
-        help="Capture initial ratchet baseline from current repo state (for existing repos)",
+        help="Capture initial ratchet, bloat, and coverage baselines for existing repos",
     )
     args = parser.parse_args(argv)
 

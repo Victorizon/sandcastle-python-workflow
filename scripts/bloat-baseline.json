@@ -1,0 +1,11 @@
+{
+  "max_lines": 450,
+  "file_line_caps": {
+    ".sandcastle/confidence.ts": 729,
+    ".sandcastle/dashboard-ui.ts": 625,
+    ".sandcastle/e2e-synthetic.ts": 639,
+    ".sandcastle/nightly-arch.ts": 475,
+    ".sandcastle/run.ts": 918
+  },
+  "vulture_findings": 0
+}
