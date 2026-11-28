@@ -118,6 +118,36 @@ def test_non_allowlisted_low_risk_unverified_order_fails_closed_not_rejected() -
     assert result.reason == "fail_closed_ambiguous_signals"
 
 
+def test_high_risk_fully_verified_non_allowlisted_order_fails_closed_not_rejected() -> None:
+    client = FakeExternalClient(
+        {
+            "order": {
+                "order_id": "ord-high-verif-009",
+                "partner_id": "partner-untrusted-09",
+                "customer_email": "verified.highrisk@example.test",
+                "channel": "web",
+                "region": "eu-west",
+            },
+            "allowlisted_partners": [],
+            "signals": [
+                {
+                    "channel": "web",
+                    "region": "eu-west",
+                    "payment_verified": True,
+                    "address_matched": True,
+                    "risk_tier": "high",
+                }
+            ],
+        }
+    )
+
+    result = triage_order("ord-high-verif-009", client)
+
+    assert result.decision is Decision.MANUAL_REVIEW
+    assert result.auto_execute is False
+    assert result.reason == "fail_closed_ambiguous_signals"
+
+
 @dataclass(frozen=True)
 class FuzzedOrderCase:
     allowlisted: bool

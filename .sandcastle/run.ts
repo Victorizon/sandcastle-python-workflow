@@ -750,6 +750,10 @@ async function main(): Promise<void> {
       let hostCheckPassed = true;
       try {
         execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
+        // Pin the immutable host-recorded preMergeSha so moving `main` or `origin/main` cannot reset the guard baseline
+        execFileSync(PYTHON_BIN, ["scripts/test_guard.py", "--base", preMergeSha], {
+          stdio: "inherit",
+        });
       } catch {
         hostCheckPassed = false;
       }
