@@ -26,21 +26,14 @@ Unconstrained LLM chats often get stuck in endless loops, weaken existing tests,
 See [DEPLOY_WORKFLOW.md](./DEPLOY_WORKFLOW.md) for the exact step-by-step setup, local smoke test, daily shipping loop, local `pre-commit`/`pre-push` branch locks (`scripts/branch_guard.py`), and 2-minute switch to server-enforced GitHub Issues & Actions. For multi-thousand-line legacy scripts, see [LEGACY_REFACTORING_PLAYBOOK.md](./LEGACY_REFACTORING_PLAYBOOK.md) and [docs/EASY_TO_CHANGE_GUIDE.md](./docs/EASY_TO_CHANGE_GUIDE.md). For Level 2 Goal Autonomy, Overnight Architecture Bots, Parallel Prototype Bake-Offs, Confidence Grading, and Agent Trust, see [docs/AUTONOMY_AND_BOTS_GUIDE.md](./docs/AUTONOMY_AND_BOTS_GUIDE.md).
 
 ```bash
-# 1. Python venv + dev tooling
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements-dev.txt -e .
+# 1. Check prerequisites without changing anything (Python >= 3.11, Node >= 20, Git, Docker, Auth)
+python scripts/setup.py --check-only
 
-# 2. Verify all 6 deterministic Python gates + adversarial anti-cheat self-tests
-python scripts/check.py
-pytest tests_tooling
+# 2. One-command idempotent setup (.venv, hooks, .sandcastle npm, Docker image, readiness verifier)
+python scripts/setup.py
+# Or without Docker / Node on restricted machines:
+# python scripts/setup.py --skip-docker
 
-# 3. Verify all workflow layers
-python scripts/verify_workflow_ready.py
-
-# 4. Run the real-Docker synthetic E2E test with live PM Mission Control Dashboard (http://127.0.0.1:4311)
-docker build -f .sandcastle/Dockerfile -t sandcastle:python-codex .
-npm --prefix .sandcastle ci
+# 3. Optional: run the real-Docker synthetic E2E test with live PM Mission Control Dashboard
 DASHBOARD_KEEP_OPEN_SEC=60 npm --prefix .sandcastle run e2e
 ```
