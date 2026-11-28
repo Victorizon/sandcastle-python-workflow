@@ -244,6 +244,7 @@ flowchart LR
   n_scripts_check_py --> n_scripts_test_guard_py
   n_scripts_local_tracker_py -.-> n_state_scratch
   n_scripts_ratchet_py -.-> n_scripts_ratchet_baseline_json
+  n_scripts_setup_py --> n_scripts_adr_miner_py
   n_scripts_setup_py -.-> n_scripts_coverage_baseline_json
   n_scripts_setup_py --> n_scripts_local_tracker_py
   n_scripts_setup_py -.-> n_scripts_ratchet_baseline_json

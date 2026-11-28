@@ -97,6 +97,7 @@ export interface WorkspaceCoachSignals {
   readonly verifiedRunCount: number;
   readonly trust: AgentTrustScorecard;
   readonly connectedReminders?: readonly string[];
+  readonly pendingAdrDrafts?: number;
 }
 
 function runGit(args: readonly string[], cwd: string): string {
@@ -181,6 +182,11 @@ export function collectWorkspaceSignals(
 
   const latestReport = findLatestHtmlReport(logsDir);
 
+  const adrDraftsDir = path.join(cwd, "docs", "adr", "drafts");
+  const pendingAdrDrafts = existsSync(adrDraftsDir)
+    ? readdirSync(adrDraftsDir).filter((f) => f.endsWith(".md")).length
+    : 0;
+
   return {
     currentBranch,
     modifiedFiles,
@@ -195,6 +201,7 @@ export function collectWorkspaceSignals(
     verifiedRunCount: verifiedRuns.length,
     trust,
     connectedReminders: collectConnectedReminders(modifiedFiles, cwd),
+    pendingAdrDrafts,
   };
 }
 
@@ -243,6 +250,17 @@ export function buildCoachNudges(signals: WorkspaceCoachSignals): CoachNudge[] {
       detail:
         "Anchors your Agent Trust Score to real-world review quality and feeds notes into the Parameter Tuner.",
       command: "npm --prefix .sandcastle run rate -- --latest --verdict good",
+    });
+  }
+
+  // 2b. Pending mined ADR drafts -> recommend dedicated $grill-me reconciliation session
+  if (signals.pendingAdrDrafts && signals.pendingAdrDrafts > 0) {
+    nudges.push({
+      priority: "recommended",
+      title: `Reconcile ${signals.pendingAdrDrafts} mined ADR draft(s) via a dedicated $grill-me session`,
+      detail:
+        "Walk through each mined quirk in docs/adr/drafts/ with $grill-me to confirm what is still required and set exact `Applies-to:` globs, then approve or reject.",
+      command: "python scripts/adr_miner.py list-drafts",
     });
   }
 
