@@ -24,7 +24,7 @@ Perform a fresh-context two-axis adversarial code review of branch `{{BRANCH}}` 
 
 <adversarial-scan-report>
 
-!`python scripts/adversarial_scan.py --base main`
+!`python scripts/adversarial_scan.py --base main --report-only`
 
 </adversarial-scan-report>
 
@@ -36,6 +36,7 @@ Perform a fresh-context two-axis adversarial code review of branch `{{BRANCH}}` 
 # CALIBRATION RUBRIC (BLOCKING vs. MINOR)
 
 - **Set `approved: false` (`severity: "blocking"`) ONLY for real defects:**
+  - Any `[FAIL]` item in `<adversarial-scan-report>` (`gitleaks`, `diff-cover`, `opengrep`, or `crosshair`) — ALWAYS blocking
   - Missing or semantically wrong acceptance criterion from `<ticket>`
   - Fail-closed violation (could auto-execute on error, missing data, or unknown input)
   - Direct third-party SDK usage outside `src/app/adapters/` or PII/secret leakage

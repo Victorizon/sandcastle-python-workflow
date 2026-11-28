@@ -20,6 +20,12 @@ Only work on this single ticket. Do not touch unrelated files or close the ticke
 
 </recent-commits>
 
+<prior-art-decision-card>
+
+!`bash -lc 'f=$(ls -t .sandcastle/logs/prior-art-*.md 2>/dev/null | head -n1); [ -n "$f" ] && cat "$f" || echo "(none)"'`
+
+</prior-art-decision-card>
+
 # CONTAINER TOOLKIT (PRE-INSTALLED)
 
 - `fd <name>` — instant `.gitignore`-aware file discovery (prefer over `find`).

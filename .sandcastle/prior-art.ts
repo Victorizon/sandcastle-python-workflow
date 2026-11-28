@@ -211,10 +211,14 @@ export async function runPreflightPriorArtResearch(params: {
 
   const specText =
     params.specFile && existsSync(params.specFile) ? readFileSync(params.specFile, "utf8") : "";
-  const resolvedDepth: ActiveResearchDepth =
+  const recommended =
     params.researchDepth === "auto"
-      ? (recommendResearchDepth({ title: params.name, description: specText }).depth as ActiveResearchDepth)
+      ? recommendResearchDepth({ title: params.name, description: specText }).depth
       : params.researchDepth;
+  if (recommended === "skip" || recommended === "auto") {
+    return { pausedForApproval: false };
+  }
+  const resolvedDepth: ActiveResearchDepth = recommended;
   const profile = RESEARCH_PROFILES[resolvedDepth];
 
   console.log(

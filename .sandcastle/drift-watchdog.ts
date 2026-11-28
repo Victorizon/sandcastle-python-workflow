@@ -73,8 +73,28 @@ export interface PostRunMetrics {
   readonly completed: boolean;
 }
 
+function extractDestinationPath(rawPath: string): string {
+  // Handle git numstat rename syntax: `old => new` or `prefix/{old => new}/file.py`
+  const braceMatch = /^(.*)\{[^{}]*=>\s*([^{}]*)\}(.*)$/u.exec(rawPath);
+  if (braceMatch) {
+    return `${braceMatch[1] ?? ""}${braceMatch[2] ?? ""}${braceMatch[3] ?? ""}`.replaceAll("//", "/");
+  }
+  if (rawPath.includes("=>")) {
+    return rawPath.split("=>").at(-1)?.trim() ?? rawPath;
+  }
+  return rawPath;
+}
+
 export function classifyDiffWeight(filePath: string): number {
-  const normalized = filePath.replaceAll("\\", "/").replace(/^\.\//u, "");
+  const normalized = extractDestinationPath(filePath).replaceAll("\\", "/").replace(/^\.\//u, "");
+  if (
+    normalized === "AGENTS.md" ||
+    normalized === "CODING_STANDARDS.md" ||
+    normalized.startsWith("scripts/") ||
+    (normalized.startsWith(".sandcastle/") && !normalized.endsWith(".test.ts"))
+  ) {
+    return 0.6;
+  }
   if (
     normalized.startsWith("tests/") ||
     normalized.startsWith("tests_tooling/") ||
@@ -85,9 +105,6 @@ export function classifyDiffWeight(filePath: string): number {
     normalized.endsWith(".md")
   ) {
     return 0;
-  }
-  if (normalized.startsWith("scripts/") || normalized.startsWith(".sandcastle/")) {
-    return 0.6;
   }
   return 1.0;
 }

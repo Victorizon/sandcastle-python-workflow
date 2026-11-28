@@ -8,6 +8,12 @@ Here are the open `ready-for-agent` tickets from the local tracker:
 
 </tickets-json>
 
+<prior-art-decision-card>
+
+!`bash -lc 'f=$(ls -t .sandcastle/logs/prior-art-*.md 2>/dev/null | head -n1); [ -n "$f" ] && cat "$f" || echo "(none)"'`
+
+</prior-art-decision-card>
+
 <!-- When switching to GitHub later, replace the shell block above with:
 !`gh issue list --state open --label ready-for-agent --limit 100 --json number,title,body,labels,comments`
 -->
