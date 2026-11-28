@@ -39,7 +39,7 @@ import {
 import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
 import { runPreflightPriorArtResearch } from "./prior-art.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
-import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
+import { installGracefulShutdown, normalizeRepoCwd, resolvePythonBin, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const NPM_BIN = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -188,6 +188,7 @@ async function runDeterministicSpecAudit(
 }
 
 async function main(): Promise<void> {
+  normalizeRepoCwd();
   assertCleanGitWorktree();
   const releaseGoalLock = acquireRunLock(".goal.lock", "goal");
   const uninstallShutdown = installGracefulShutdown(() => {

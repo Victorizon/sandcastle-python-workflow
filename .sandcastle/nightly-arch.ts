@@ -27,7 +27,7 @@ import { formatEndOfRunFooter } from "./coach.js";
 import { DriftDetectedError, DriftWatchdog, parseGitNumstat } from "./drift-watchdog.js";
 import { writePmHtmlReport } from "./pm-report.js";
 import { REPO_MUTATION_LOCK, acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
-import { installGracefulShutdown, withTransientRetry } from "./resilience.js";
+import { installGracefulShutdown, normalizeRepoCwd, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 
@@ -218,7 +218,7 @@ function isBranchAheadOfMain(branch: string): boolean {
   }
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<void> { normalizeRepoCwd();
   const { maxProposals, maxMinutes, mode, openPrs, agentKind } = parseCliArgs(process.argv.slice(2));
   const startedMs = Date.now();
   const dateTag = new Date().toISOString().slice(0, 10);

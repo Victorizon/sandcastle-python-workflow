@@ -17,6 +17,18 @@ const TRANSIENT_PATTERN =
 const PERMANENT_PATTERN =
   /\b(401|403|unauthorized|forbidden|invalid_api_key|authentication failed|drift detected)\b/iu;
 
+export function normalizeRepoCwd(cwd = process.cwd()): string {
+  const resolved = path.resolve(cwd);
+  if (path.basename(resolved) === ".sandcastle") {
+    const parent = path.dirname(resolved);
+    if (existsSync(path.join(parent, "scripts")) || existsSync(path.join(parent, ".git"))) {
+      process.chdir(parent);
+      return parent;
+    }
+  }
+  return resolved;
+}
+
 export function resolvePythonBin(cwd = process.cwd()): string {
   const candidates =
     process.platform === "win32"

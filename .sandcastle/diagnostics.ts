@@ -14,6 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { normalizeRepoCwd } from "./resilience.js";
 
 export type PhaseName =
   | "planner"
@@ -200,6 +201,7 @@ export function formatDiagnoseReport(traceFile: string, spans: readonly PhaseSpa
 }
 
 function main(): void {
+  normalizeRepoCwd();
   const argv = process.argv.slice(2);
   const fileFlagIdx = argv.indexOf("--file");
   const explicitFile = fileFlagIdx >= 0 ? argv[fileFlagIdx + 1] : undefined;

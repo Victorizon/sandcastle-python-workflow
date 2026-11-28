@@ -21,7 +21,7 @@ import {
   assertCleanGitWorktree,
   validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
-import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
+import { installGracefulShutdown, normalizeRepoCwd, resolvePythonBin, withTransientRetry } from "./resilience.js";
 import {
   PlanSchema,
   type SliceRuntimeContext,
@@ -30,7 +30,13 @@ import {
 } from "./slice-container.js";
 import { processTicket } from "./slice-runner.js";
 
+// `npm --prefix .sandcastle run factory` sets cwd to `.sandcastle/`; normalize to repo root.
+if (path.basename(process.cwd()) === ".sandcastle") {
+  process.chdir(path.resolve(process.cwd(), ".."));
+}
+
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
+normalizeRepoCwd();
 const PYTHON_BIN = resolvePythonBin();
 const MAX_OUTER_CYCLES = Math.min(100, Math.floor(parsePositiveEnvNumber(process.env["SANDCASTLE_MAX_CYCLES"], 6)));
 const MAX_PARALLEL = 2;
