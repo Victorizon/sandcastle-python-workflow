@@ -21,9 +21,9 @@ git checkout -b chore/adopt-workflow
 
 ```bash
 # 2. Copy ONLY the workflow toolbox in (skips existing files, removes template baselines)
-cp -rn "$TOOLBOX/.sandcastle" "$TOOLBOX/scripts" "$TOOLBOX/docs" "$TOOLBOX/.codex" "$TOOLBOX/.github" .
-cp -n "$TOOLBOX/AGENTS.md" "$TOOLBOX/.pre-commit-config.yaml" "$TOOLBOX/requirements-dev.txt" "$TOOLBOX/pyproject.toml" .
-rm -f scripts/ratchet-baseline.json scripts/bloat-baseline.json scripts/coverage-baseline.json
+cp -rn "$TOOLBOX/.sandcastle" "$TOOLBOX/scripts" "$TOOLBOX/docs" "$TOOLBOX/.agents" "$TOOLBOX/.github" . \
+  && cp -n "$TOOLBOX/AGENTS.md" "$TOOLBOX/.pre-commit-config.yaml" "$TOOLBOX/requirements-dev.txt" "$TOOLBOX/pyproject.toml" . \
+  && rm -f scripts/ratchet-baseline.json scripts/bloat-baseline.json scripts/coverage-baseline.json
 ```
 
 ```bash
@@ -39,9 +39,11 @@ git commit -m "chore: adopt sandcastle workflow with Day-1 baselines"
 code .
 ```
 
+> **Note on repo layout:** Repos without a `src/` package (e.g., notebook-only or flat-script repos) are supported automatically — `setup.py` skips editable `-e .` install, and `check.py` / CI skip `src/`-only gates (`lint-imports`, `--cov=src`, `mutation_check.py`) while still enforcing formatting, `ratchet.py`, `pytest`, and `test_guard.py`.
+>
 > **Next in VS Code (Codex):**
 > - Optional legacy onboarding: `.venv/bin/python scripts/adr_miner.py mine` → run **`$grill-me`** over `docs/adr/drafts/*.md` → approve real ADRs (`python scripts/adr_miner.py approve <draft>`).
-> - Daily shipping loop: `$grill-me` → `$to-spec` → `$to-tickets` → commit tickets → `npm --prefix .sandcastle run factory`.
+> - Daily shipping loop (skip Step 5's template-only smoke ticket): `$grill-me` → `$to-spec` → `$to-tickets` → commit tickets → `npm --prefix .sandcastle run factory`.
 
 ---
 
@@ -131,7 +133,9 @@ Every layer must print **`[PASS]`**. Once all 5 layers pass, workflow setup is *
 
 ---
 
-## Step 5: Run the 1-Ticket Local Smoke Test Through Sandcastle
+## Step 5: Run the 1-Ticket Local Smoke Test Through Sandcastle *(Fresh Template Clones Only)*
+
+> Existing-repo adopters do not copy `.scratch/workflow-smoke-test/`; skip this step and create your first real ticket via `$grill-me` → `$to-spec` → `$to-tickets`.
 
 ```bash
 python scripts/local_tracker.py board

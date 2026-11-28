@@ -54,46 +54,43 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    test_guard_cmd = [
-        sys.executable,
-        "scripts/test_guard.py",
-        "--base",
-        "main",
-        "--coverage-json",
-        COVERAGE_JSON.name,
-    ]
+    has_src = (ROOT / "src").is_dir()
+    format_dirs = [d for d in ("src", "tests", "tests_tooling", "scripts") if (ROOT / d).is_dir()]
+
+    test_guard_cmd = [sys.executable, "scripts/test_guard.py", "--base", "main"]
+    if has_src:
+        test_guard_cmd.extend(["--coverage-json", COVERAGE_JSON.name])
     if args.allow_harness_edit:
         test_guard_cmd.append("--allow-harness-edit")
 
-    steps: list[tuple[str, list[str]]] = [
-        (
-            "Format check",
-            [
-                _resolve_tool("ruff"),
-                "format",
-                "--check",
-                "src",
-                "tests",
-                "tests_tooling",
-                "scripts",
-            ],
-        ),
-        ("Monotonic ratchet", [sys.executable, "scripts/ratchet.py", "--check"]),
-        ("Import boundaries", [_resolve_tool("lint-imports")]),
-        (
-            "Replay test suite + coverage",
-            [
-                _resolve_tool("pytest"),
-                "--cov=src",
-                f"--cov-report=json:{COVERAGE_JSON.name}",
-            ],
-        ),
-        ("Strict test guard + coverage floor", test_guard_cmd),
-        (
-            "AST mutation check",
-            [sys.executable, "scripts/mutation_check.py", "--base", "main"],
-        ),
-    ]
+    steps: list[tuple[str, list[str]]] = []
+    if format_dirs:
+        steps.append(("Format check", [_resolve_tool("ruff"), "format", "--check", *format_dirs]))
+    steps.append(("Monotonic ratchet", [sys.executable, "scripts/ratchet.py", "--check"]))
+    if has_src:
+        steps.append(("Import boundaries", [_resolve_tool("lint-imports")]))
+        steps.append(
+            (
+                "Replay test suite + coverage",
+                [
+                    _resolve_tool("pytest"),
+                    "--cov=src",
+                    f"--cov-report=json:{COVERAGE_JSON.name}",
+                ],
+            )
+        )
+    else:
+        print("[SKIP] Import boundaries & coverage/mutation gates (no `src/` package directory)")
+        if (ROOT / "tests").is_dir():
+            steps.append(("Test suite", [_resolve_tool("pytest")]))
+    steps.append(("Strict test guard + coverage floor", test_guard_cmd))
+    if has_src:
+        steps.append(
+            (
+                "AST mutation check",
+                [sys.executable, "scripts/mutation_check.py", "--base", "main"],
+            )
+        )
 
     try:
         for label, cmd in steps:
