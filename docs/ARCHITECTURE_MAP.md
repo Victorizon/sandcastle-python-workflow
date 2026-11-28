@@ -52,6 +52,7 @@ flowchart LR
     n_sandcastle_tune_prompt_md[".sandcastle/tune-prompt.md"]
   end
   subgraph Python_Gates_and_Tools["Python Gates and Tools"]
+    n_scripts_adr_miner_py["scripts/adr_miner.py"]
     n_scripts_adversarial_scan_py["scripts/adversarial_scan.py"]
     n_scripts_anti_bloat_guard_py["scripts/anti_bloat_guard.py"]
     n_scripts_arch_map_py["scripts/arch_map.py"]
@@ -106,6 +107,7 @@ flowchart LR
   n_sandcastle_coach_ts --> n_sandcastle_goal_core_ts
   n_sandcastle_coach_ts --> n_sandcastle_resilience_ts
   n_sandcastle_coach_ts --> n_sandcastle_run_history_ts
+  n_sandcastle_coach_ts --> n_scripts_adr_miner_py
   n_sandcastle_coach_ts --> n_scripts_adversarial_scan_py
   n_sandcastle_coach_ts --> n_scripts_anti_bloat_guard_py
   n_sandcastle_coach_ts --> n_scripts_arch_map_py
@@ -187,6 +189,7 @@ flowchart LR
   n_sandcastle_rate_ts --> n_sandcastle_confidence_ts
   n_sandcastle_rate_ts --> n_sandcastle_run_history_ts
   n_sandcastle_rate_ts -.-> n_state_sandcastle_logs
+  n_sandcastle_review_prompt_md --> n_scripts_adr_miner_py
   n_sandcastle_review_prompt_md --> n_scripts_adversarial_scan_py
   n_sandcastle_review_prompt_md --> n_scripts_check_py
   n_sandcastle_review_prompt_md --> n_scripts_local_tracker_py
@@ -279,6 +282,7 @@ flowchart LR
   n_scripts_verify_workflow_ready_py --> n_sandcastle_review_prompt_md
   n_scripts_verify_workflow_ready_py --> n_sandcastle_spec_audit_prompt_md
   n_scripts_verify_workflow_ready_py --> n_sandcastle_tune_prompt_md
+  n_scripts_verify_workflow_ready_py --> n_scripts_adr_miner_py
   n_scripts_verify_workflow_ready_py --> n_scripts_adversarial_scan_py
   n_scripts_verify_workflow_ready_py --> n_scripts_anti_bloat_guard_py
   n_scripts_verify_workflow_ready_py --> n_scripts_arch_map_py

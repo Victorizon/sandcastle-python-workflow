@@ -67,6 +67,10 @@ const CONTEXTUAL_TIPS: readonly { readonly pattern: RegExp; readonly tip: string
     pattern: /\b(new|feature|design|architecture|prior|research|spec)\b/iu,
     tip: "Starting a new feature? Run `$grill-me` (<= 3 batches), confirm Prior-Art `researchDepth`, and freeze `docs/specs/<slug>.md`.",
   },
+  {
+    pattern: /\b(adr|anomaly|quirk|jira|history|workaround)\b/iu,
+    tip: "Need ADRs for legacy code quirks? Run `python scripts/adr_miner.py mine` (optional `--jira-export`), review drafts, then `approve` to auto-enforce via `Applies-to:`.",
+  },
 ];
 
 export function pickContextualTip(contextPrompt?: string, seed = Math.floor(Date.now() / 60_000)): string {
