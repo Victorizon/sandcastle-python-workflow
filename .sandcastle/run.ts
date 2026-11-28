@@ -21,6 +21,7 @@ import {
   assertCleanGitWorktree, commitScratchState, rollbackToCommitClean, validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
 import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
+import { RunTracer } from "./diagnostics.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
 const PYTHON_BIN = resolvePythonBin();
@@ -630,12 +631,8 @@ async function processTicket(
 async function main(): Promise<void> {
   preflightChecks();
   const releaseLock = acquireRunLock(REPO_MUTATION_LOCK, "factory");
-
-  const dashboard = new PMDashboard({
-    mode: "factory",
-    dockerImage: IMAGE_NAME,
-    maxCycles: MAX_OUTER_CYCLES,
-  });
+  const tracer = new RunTracer();
+  const dashboard = new PMDashboard({ mode: "factory", dockerImage: IMAGE_NAME, maxCycles: MAX_OUTER_CYCLES });
   const dashUrl = await dashboard.start();
   console.log(`\nPM Mission Control Dashboard LIVE at: ${dashUrl}\n`);
   const uninstallShutdown = installGracefulShutdown(async () => {
@@ -647,26 +644,25 @@ async function main(): Promise<void> {
     for (let cycle = 1; cycle <= MAX_OUTER_CYCLES; cycle++) {
       dashboard.setCycle(cycle, `Cycle ${cycle}/${MAX_OUTER_CYCLES}: Planner analyzing unblocked slices...`);
 
+      const tPlan = performance.now();
       const planRun = await withTransientRetry(
         () =>
           sandcastle.run({
             sandbox: makeDocker(),
             name: "Planner",
             agent: createAgent("medium"),
+            logging: tracer.sandboxLogging(cycle, "planner"),
             promptFile: "./.sandcastle/plan-prompt.md",
             output: Output.object({ tag: "plan", schema: PlanSchema, maxRetries: 2 }),
           }),
         { label: `Planner cycle ${cycle}` },
       );
-
-      const liveTrackerTickets = loadLiveTrackerReadyTickets();
       const { valid: tickets, droppedReasons } = validatePlannedTicketsAgainstTracker(
         planRun.output.tickets,
-        liveTrackerTickets,
+        loadLiveTrackerReadyTickets(),
       );
-      if (droppedReasons.length > 0) {
-        console.warn("  [PREFLIGHT] Dropped invalid Planner selections:", droppedReasons.join("; "));
-      }
+      tracer.recordSpan({ cycle, phase: "planner", outcome: droppedReasons.length ? "fail" : "pass", durationMs: performance.now() - tPlan, detail: `picked=${tickets.length} dropped=${droppedReasons.length}${droppedReasons.length ? ` (${droppedReasons.join("; ")})` : ""}` });
+      if (droppedReasons.length > 0) console.warn("  [PREFLIGHT] Dropped invalid Planner selections:", droppedReasons.join("; "));
       if (tickets.length === 0) {
         dashboard.setRunStatus("complete", "All planned slices complete — no ready-for-agent work remaining.");
         break;
@@ -735,42 +731,44 @@ async function main(): Promise<void> {
 
       const preMergeSha = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
       dashboard.setCycle(cycle, `Merger combining ${readyToMerge.length} approved branch(es) into main...`);
+      const tMerge = performance.now();
       await sandcastle.run({
         sandbox: makeDocker(),
         name: "Merger",
         branchStrategy: { type: "head" },
         maxIterations: 4,
         agent: createAgent("medium"),
+        logging: tracer.sandboxLogging(cycle, "merge"),
         promptFile: "./.sandcastle/merge-prompt.md",
         promptArgs: {
           BRANCHES: readyToMerge.map((t) => `- ${t.branch}`).join("\n"),
           TICKETS: readyToMerge.map((t) => `- ${t.id}: ${t.title}`).join("\n"),
         },
       });
+      tracer.recordSpan({ cycle, phase: "merge", outcome: "pass", durationMs: performance.now() - tMerge, detail: readyToMerge.map((t) => t.id).join(", ") });
 
       // Deterministic host-side verification after Merger + optional multi-branch cross-slice audit
+      const tHost = performance.now();
       let hostCheckPassed = true;
       try {
         execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
-        // Pin the immutable host-recorded preMergeSha so moving `main` or `origin/main` cannot reset the guard baseline
-        execFileSync(PYTHON_BIN, ["scripts/test_guard.py", "--base", preMergeSha], {
-          stdio: "inherit",
-        });
-        execFileSync(PYTHON_BIN, ["scripts/adversarial_scan.py", "--base", preMergeSha], {
-          stdio: "inherit",
-        });
+        execFileSync(PYTHON_BIN, ["scripts/test_guard.py", "--base", preMergeSha], { stdio: "inherit" });
+        execFileSync(PYTHON_BIN, ["scripts/adversarial_scan.py", "--base", preMergeSha], { stdio: "inherit" });
       } catch {
         hostCheckPassed = false;
       }
+      tracer.recordSpan({ cycle, phase: "host_check", outcome: hostCheckPassed ? "pass" : "rollback", durationMs: performance.now() - tHost, detail: hostCheckPassed ? "check.py + test_guard + adversarial_scan PASS" : "host post-merge gate FAILED" });
 
       let multiMergeConflictIssue: string | null = null;
       if (hostCheckPassed && readyToMerge.length >= 2) {
+        const tAudit = performance.now();
         const mergeReview = await withTransientRetry(
           () =>
             sandcastle.run({
               sandbox: makeDocker(),
               name: "Post-Merge Cross-Slice Auditor",
               agent: createAgent("high"),
+              logging: tracer.sandboxLogging(cycle, "post_merge_audit"),
               prompt: [
                 `Inspect the combined multi-branch merge diff (\`git diff ${preMergeSha}..HEAD\`) for tickets:`,
                 ...readyToMerge.map((t) => `- ${t.id}: ${t.title}`),
@@ -788,6 +786,7 @@ async function main(): Promise<void> {
             mergeVerdict?.blockingIssues.join("; ") ||
             "Post-merge cross-slice auditor flagged a conflict or dropped requirement.";
         }
+        tracer.recordSpan({ cycle, phase: "post_merge_audit", outcome: multiMergeConflictIssue ? "rollback" : "pass", durationMs: performance.now() - tAudit, detail: multiMergeConflictIssue ?? mergeVerdict?.summary ?? "approved" });
       }
 
       if (!hostCheckPassed || multiMergeConflictIssue !== null) {

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import platform
 import re
@@ -132,6 +133,7 @@ class IssueDraftInput:
     cmd_str: str | None = None
     cmd_exit: int | None = None
     cmd_output: str | None = None
+    trace_summary: str | None = None
 
 
 def anonymize_text(text: str, ctx: AnonymizeContext | None = None) -> str:
@@ -245,6 +247,32 @@ def collect_safe_environment(repo_root: Path = ROOT) -> dict[str, str]:
     return env_info
 
 
+def summarize_latest_trace(repo_root: Path = ROOT) -> str | None:
+    """Load the latest `.sandcastle/logs/runs/trace-*.jsonl` as a compact phase-timing summary."""
+    pointer = repo_root / ".sandcastle" / "logs" / "runs" / "latest-trace.txt"
+    if not pointer.is_file():
+        return None
+    trace_path = Path(pointer.read_text(encoding="utf-8", errors="replace").strip())
+    if not trace_path.is_file():
+        return None
+    lines: list[str] = []
+    for raw in trace_path.read_text(encoding="utf-8", errors="replace").splitlines()[-30:]:
+        if not raw.strip():
+            continue
+        try:
+            span = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        phase = str(span.get("phase", "unknown"))
+        outcome = str(span.get("outcome", "unknown"))
+        dur_s = float(span.get("durationMs", 0)) / 1000.0
+        detail = str(span.get("detail", "")).strip()
+        lines.append(
+            f"- c{span.get('cycle', '?')} `{phase}` -> `{outcome}` ({dur_s:.1f}s) {detail}"
+        )
+    return "\n".join(lines) if lines else None
+
+
 def build_issue_markdown(
     draft: IssueDraftInput,
     ctx: AnonymizeContext | None = None,
@@ -264,6 +292,8 @@ def build_issue_markdown(
     ]
     if draft.repro.strip():
         sections.append(f"## Reproduction Steps\n\n{scrub(draft.repro).strip()}")
+    if draft.trace_summary:
+        sections.append(f"## Phase Trace Summary (Anonymized)\n\n{scrub(draft.trace_summary)}")
     if draft.cmd_str and draft.cmd_output is not None:
         safe_out = scrub(sanitize_harness_output(draft.cmd_output, repo_root=active_ctx.repo_root))
         tail = "\n".join(safe_out.splitlines()[-40:])
@@ -294,36 +324,20 @@ def _publish_github_issue(repo: str, title: str, body: str, kind: str) -> int:
     label = "bug" if kind == "bug" else "enhancement"
     DRAFT_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     DRAFT_OUTPUT_PATH.write_text(body, encoding="utf-8")
-    proc = _run_capture(
-        [
-            "gh",
-            "issue",
-            "create",
-            "--repo",
-            repo,
-            "--title",
-            title,
-            "--body-file",
-            str(DRAFT_OUTPUT_PATH),
-            "--label",
-            label,
-        ]
-    )
+    base_cmd = [
+        "gh",
+        "issue",
+        "create",
+        "--repo",
+        repo,
+        "--title",
+        title,
+        "--body-file",
+        str(DRAFT_OUTPUT_PATH),
+    ]
+    proc = _run_capture([*base_cmd, "--label", label])
     if proc.returncode != 0:
-        # Retry without label in case the target repo does not define it
-        proc = _run_capture(
-            [
-                "gh",
-                "issue",
-                "create",
-                "--repo",
-                repo,
-                "--title",
-                title,
-                "--body-file",
-                str(DRAFT_OUTPUT_PATH),
-            ]
-        )
+        proc = _run_capture(base_cmd)
     if proc.returncode != 0:
         print(f"[FAIL] gh issue create failed:\n{proc.stderr.strip()}", file=sys.stderr)
         return 1
@@ -343,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
         "--cmd",
         default="",
         help="Optional allowlisted harness command to run and attach sanitized output",
+    )
+    parser.add_argument(
+        "--include-latest-trace",
+        action="store_true",
+        help="Attach anonymized phase timings & verdicts from the latest Sandcastle run trace",
     )
     parser.add_argument("--repo", default=DEFAULT_UPSTREAM_REPO, help="Upstream GitHub owner/repo")
     parser.add_argument(
@@ -369,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
 
     extra_terms = load_local_redact_terms()
     env_info = collect_safe_environment(ROOT)
+    trace_summary = summarize_latest_trace(ROOT) if args.include_latest_trace else None
     clean_title, clean_body = build_issue_markdown(
         IssueDraftInput(
             kind=args.kind,
@@ -379,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             cmd_str=args.cmd or None,
             cmd_exit=cmd_exit,
             cmd_output=cmd_output,
+            trace_summary=trace_summary,
         ),
         AnonymizeContext(repo_root=ROOT, extra_terms=tuple(extra_terms)),
     )
