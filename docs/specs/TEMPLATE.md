@@ -13,3 +13,8 @@
 
 ## Explicit Non-Goals (Out of Scope — Do Not Touch)
 - **OUT-1:** <Behavior or subsystem intentionally excluded from this goal.>
+
+## Prior-Art Research Gate (Mandatory Post-Grill)
+- **Recommended Depth:** `standard` *(choices: `fast | standard | deep | deep-synthesis | skip` — user may override)*
+- **Skip Justification (only if `skip`):** <Must be bug fix, repo-context-only domain rule, or small internal refactor.>
+- **Prior-Art Verdict:** <`ADOPT | BORROW | BUILD` + 1-line summary; full `<= 30`-line card saved in `.sandcastle/logs/prior-art-<slug>.md`>

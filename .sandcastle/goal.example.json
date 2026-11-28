@@ -2,6 +2,7 @@
   "name": "Extract and verify clean order signal rules",
   "slug": "signal-rules-goal",
   "specFile": "docs/specs/order-triage-example.md",
+  "researchDepth": "standard",
   "requireAllTicketsResolved": true,
   "verifyCommands": [
     "python scripts/check.py"
