@@ -21,6 +21,7 @@ import {
   loadHumanRatings,
 } from "./confidence.js";
 import { countLocalTicketsByStatus } from "./goal-core.js";
+import { resolvePythonBin } from "./resilience.js";
 import { MIN_RUNS_FOR_TUNING, loadVerifiedRunHistory } from "./run-history.js";
 
 export type NudgePriority = "urgent" | "recommended" | "tip";
@@ -91,6 +92,7 @@ export interface WorkspaceCoachSignals {
   readonly latestRunRated: boolean;
   readonly verifiedRunCount: number;
   readonly trust: AgentTrustScorecard;
+  readonly connectedReminders?: readonly string[];
 }
 
 function runGit(args: readonly string[], cwd: string): string {
@@ -121,6 +123,29 @@ export function findLatestHtmlReport(
   const rel = path.relative(process.cwd(), newest.full).replaceAll("\\", "/");
   const ageHours = Number(((Date.now() - newest.mtimeMs) / 3_600_000).toFixed(1));
   return { filePath: rel, ageHours };
+}
+
+function collectConnectedReminders(modifiedFiles: readonly string[], cwd: string): string[] {
+  if (modifiedFiles.length === 0) return [];
+  const archMap = path.join(cwd, "scripts", "arch_map.py");
+  if (!existsSync(archMap)) return [];
+  try {
+    const out = execFileSync(
+      resolvePythonBin(cwd),
+      [archMap, "--root", cwd, "--impact", "--json", "--files", ...modifiedFiles],
+      { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const parsed = JSON.parse(out) as {
+      suggestions?: { file: string; check_callers?: string[] }[];
+    };
+    const callers = new Set<string>();
+    for (const s of parsed.suggestions ?? []) {
+      for (const c of s.check_callers ?? []) callers.add(c);
+    }
+    return [...callers].slice(0, 6);
+  } catch {
+    return [];
+  }
 }
 
 export function collectWorkspaceSignals(
@@ -165,6 +190,7 @@ export function collectWorkspaceSignals(
     latestRunRated: latestRun ? ratedIds.has(latestRun.runId) : true,
     verifiedRunCount: verifiedRuns.length,
     trust,
+    connectedReminders: collectConnectedReminders(modifiedFiles, cwd),
   };
 }
 
@@ -272,7 +298,17 @@ export function buildCoachNudges(signals: WorkspaceCoachSignals): CoachNudge[] {
     });
   }
 
-  // 6. Branch hygiene
+  // 6. Connected-component reminder (don't leave linked files behind!)
+  if (signals.connectedReminders && signals.connectedReminders.length > 0) {
+    nudges.push({
+      priority: "tip",
+      title: `Double-check ${signals.connectedReminders.length} connected component(s) for your edits`,
+      detail: `Your modified files are referenced by: ${signals.connectedReminders.join(", ")}.`,
+      command: "python scripts/arch_map.py --impact",
+    });
+  }
+
+  // 7. Branch hygiene
   if (signals.staleWorkBranches >= 4) {
     nudges.push({
       priority: "tip",
