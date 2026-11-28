@@ -50,9 +50,53 @@ def _flip_eq_op(node: ast.AST) -> None:
         node.ops[0] = ast.NotEq() if isinstance(node.ops[0], ast.Eq) else ast.Eq()
 
 
+def _flip_identity_or_membership(node: ast.AST) -> None:
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        swap: dict[type[ast.cmpop], ast.cmpop] = {
+            ast.Is: ast.IsNot(),
+            ast.IsNot: ast.Is(),
+            ast.In: ast.NotIn(),
+            ast.NotIn: ast.In(),
+        }
+        node.ops[0] = swap.get(type(node.ops[0]), node.ops[0])
+
+
+def _drop_not(node: ast.AST) -> None:
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        # `not x` -> `not (not x)`, i.e. bool(x): the `not` is dropped in place, without
+        # replacing the node itself (which the index-based mutant cloning relies on).
+        node.operand = ast.UnaryOp(op=ast.Not(), operand=node.operand)
+
+
 def _flip_decision_attr(node: ast.AST) -> None:
     if isinstance(node, ast.Attribute):
         node.attr = "AUTO_APPROVE"
+
+
+_COMPARE_SYMBOLS: dict[type[ast.cmpop], str] = {
+    ast.Eq: "==",
+    ast.NotEq: "!=",
+    ast.Is: "is",
+    ast.IsNot: "is not",
+    ast.In: "in",
+    ast.NotIn: "not in",
+}
+_COMPARE_OPPOSITE: dict[str, str] = {
+    "==": "!=",
+    "!=": "==",
+    "is": "is not",
+    "is not": "is",
+    "in": "not in",
+    "not in": "in",
+}
+
+
+def _describe_compare(op: ast.cmpop) -> tuple[str, Callable[[ast.AST], None]] | None:
+    sym = _COMPARE_SYMBOLS.get(type(op))
+    if sym is None:
+        return None
+    mutator = _flip_eq_op if sym in {"==", "!="} else _flip_identity_or_membership
+    return (f"compare `{sym}` -> `{_COMPARE_OPPOSITE[sym]}`", mutator)
 
 
 def _describe_mutation(node: ast.AST) -> tuple[str, Callable[[ast.AST], None]] | None:
@@ -63,10 +107,9 @@ def _describe_mutation(node: ast.AST) -> tuple[str, Callable[[ast.AST], None]] |
         op_name = "and -> or" if isinstance(node.op, ast.And) else "or -> and"
         return (f"logic `{op_name}`", _flip_bool_op)
     if isinstance(node, ast.Compare) and len(node.ops) == 1:
-        if isinstance(node.ops[0], ast.Eq):
-            return ("compare `==` -> `!=`", _flip_eq_op)
-        if isinstance(node.ops[0], ast.NotEq):
-            return ("compare `!=` -> `==`", _flip_eq_op)
+        return _describe_compare(node.ops[0])
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return ("logic `not x` -> `x`", _drop_not)
     if (
         isinstance(node, ast.Attribute)
         and isinstance(node.value, ast.Name)
@@ -128,7 +171,10 @@ def _run_pytest_in(workdir: Path) -> int:
 
 def _copy_project(root: Path, dest: Path) -> None:
     ignore = shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache", ".hypothesis")
-    for item in ("src", "tests", "pyproject.toml"):
+    # Root-level pytest config/hook files change how the suite runs (deselection, monkeypatching),
+    # so mutants must run in the same environment as the real suite.
+    root_hooks = ("conftest.py", "pytest.ini", "tox.ini", "setup.cfg")
+    for item in ("src", "tests", "pyproject.toml", *root_hooks):
         src_path = root / item
         dst_path = dest / item
         if src_path.is_dir():

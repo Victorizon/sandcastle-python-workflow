@@ -5,16 +5,23 @@ Mechanically blocks AI agents from cheating tests or tampering with referees:
    - Blocks agents from modifying `scripts/check.py`, `scripts/test_guard.py`,
      `scripts/ratchet.py`, `scripts/mutation_check.py`, baseline JSONs, `pyproject.toml`,
      `tests/conftest.py`, or `tests/fakes/fake_external_client.py` unless `--allow-harness-edit`.
-2. Anti-tampering (vs --base ref):
+   - Also blocks adding, changing or deleting ANY pytest config/hook file anywhere in the repo
+     (`conftest.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `sitecustomize.py`, `usercustomize.py`):
+     each can deselect tests or monkeypatch production code while tests run.
+2. Anti-tampering (vs --base ref; prefers `origin/<base>` so moving a local branch cannot reset it):
    - No deleting existing test files (`test_*.py` / `*_test.py`) or fixture JSONs
    - No modifying existing historical fixture JSONs under `tests/fixtures/`
    - No deleting/renaming existing `def test_*` functions
    - No reducing assertion counts on existing `def test_*` functions
+   - No rewriting existing assertions (`x is REJECT` -> `x in (REJECT, APPROVE)`); adding is fine
 3. Anti-weakening (always enforced on all `tests/`):
-   - Bans `pytest.mark.skip`, `pytest.mark.xfail`, `pytest.skip(...)`, `assert True`,
+   - Bans `pytest.mark.skip`, `pytest.mark.xfail`, `pytest.skip(...)` (also as module- or
+     class-level `pytestmark` / class decorators), `assert True`,
      `assert not False`, truthy-literal asserts, constant comparisons (`assert 1 != 2`),
-     `assert x == x`, swallowed assertions (`try: assert ... except ...`), dead-branch
-     assertions (`if False: assert ...`), and tests with 0 `assert` statements.
+     `assert x == x`, swallowed assertions (`try: assert ... except ...`,
+     `with suppress(AssertionError): assert ...`, `with pytest.raises(AssertionError): assert ...`),
+     dead assertions (`if False:` / `if not True:` branches, or after a `return`/`raise`),
+     and tests with 0 `assert` statements.
 4. Monotonic coverage floor (reads coverage JSON vs `scripts/coverage-baseline.json` AND base ref):
    - Total `src/` line coverage may NEVER drop below baseline (0.1% cross-platform tolerance),
      and `scripts/coverage-baseline.json` may NEVER be lowered vs `--base`.
@@ -23,11 +30,11 @@ Mechanically blocks AI agents from cheating tests or tampering with referees:
 from __future__ import annotations
 
 import argparse
-import ast
 import json
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
+
+from test_quality_ast import TestFunctionStats, analyze_test_source, module_level_skip_issues
 
 ROOT = Path(__file__).resolve().parent.parent
 COVERAGE_BASELINE_PATH = ROOT / "scripts" / "coverage-baseline.json"
@@ -47,128 +54,15 @@ HARNESS_LOCKED_FILES: tuple[str, ...] = (
     "pyproject.toml",
     "tests/conftest.py",
     "tests/fakes/fake_external_client.py",
+    "scripts/venv_run.py",
+    "scripts/test_quality_ast.py",
 )
 
-BROAD_EXCEPT_NAMES: frozenset[str] = frozenset({"AssertionError", "Exception", "BaseException"})
-
-
-@dataclass(frozen=True)
-class TestFunctionStats:
-    name: str
-    assert_count: int
-    has_skip_or_xfail: bool
-    has_trivial_assert: bool
-    has_swallowed_or_dead_assert: bool
-
-
-def _is_constant_expr(node: ast.expr) -> bool:
-    if isinstance(node, ast.Constant):
-        return True
-    if isinstance(node, ast.UnaryOp):
-        return _is_constant_expr(node.operand)
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return all(_is_constant_expr(el) for el in node.elts)
-    return False
-
-
-def _is_trivial_assert(node: ast.Assert) -> bool:
-    test = node.test
-    if isinstance(test, ast.Constant) and bool(test.value):
-        return True
-    if (
-        isinstance(test, ast.UnaryOp)
-        and isinstance(test.op, ast.Not)
-        and isinstance(test.operand, ast.Constant)
-        and not bool(test.operand.value)
-    ):
-        return True
-    if isinstance(test, (ast.List, ast.Tuple, ast.Set)) and len(test.elts) > 0:
-        return True
-    if isinstance(test, ast.Compare) and len(test.ops) == 1 and len(test.comparators) == 1:
-        right = test.comparators[0]
-        if isinstance(test.ops[0], ast.Eq) and ast.dump(test.left) == ast.dump(right):
-            return True
-        if _is_constant_expr(test.left) and _is_constant_expr(right):
-            return True
-    return False
-
-
-def _has_assert_inside(nodes: list[ast.stmt]) -> bool:
-    for stmt in nodes:
-        for child in ast.walk(stmt):
-            if isinstance(child, ast.Assert):
-                return True
-    return False
-
-
-def _catches_assertion_error(handler: ast.ExceptHandler) -> bool:
-    if handler.type is None:
-        return True
-    if isinstance(handler.type, ast.Name):
-        return handler.type.id in BROAD_EXCEPT_NAMES
-    if isinstance(handler.type, ast.Tuple):
-        return any(
-            isinstance(el, ast.Name) and el.id in BROAD_EXCEPT_NAMES for el in handler.type.elts
-        )
-    return False
-
-
-def _has_swallowed_or_dead_assert(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    for child in ast.walk(fn):
-        if (
-            isinstance(child, ast.Try)
-            and _has_assert_inside(child.body)
-            and any(_catches_assertion_error(h) for h in child.handlers)
-        ):
-            return True
-        if (
-            isinstance(child, ast.If)
-            and isinstance(child.test, ast.Constant)
-            and not bool(child.test.value)
-            and _has_assert_inside(child.body)
-        ):
-            return True
-    return False
-
-
-def _has_skip_decorator(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    for dec in fn.decorator_list:
-        dumped = ast.unparse(dec)
-        if "skip" in dumped or "xfail" in dumped:
-            return True
-    return False
-
-
-def _analyze_test_source(source: str) -> dict[str, TestFunctionStats]:
-    tree = ast.parse(source)
-    stats: dict[str, TestFunctionStats] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not node.name.startswith("test_"):
-            continue
-        asserts = 0
-        has_trivial = False
-        has_skip = _has_skip_decorator(node)
-        for child in ast.walk(node):
-            if isinstance(child, ast.Assert):
-                asserts += 1
-                if _is_trivial_assert(child):
-                    has_trivial = True
-            elif isinstance(child, ast.Call):
-                call_text = ast.unparse(child.func)
-                if call_text.endswith("pytest.raises"):
-                    asserts += 1
-                if call_text.endswith(("pytest.skip", "pytest.xfail")):
-                    has_skip = True
-        stats[node.name] = TestFunctionStats(
-            name=node.name,
-            assert_count=asserts,
-            has_skip_or_xfail=has_skip,
-            has_trivial_assert=has_trivial,
-            has_swallowed_or_dead_assert=_has_swallowed_or_dead_assert(node),
-        )
-    return stats
+# Files pytest (or Python itself) auto-loads from anywhere in the tree. Any of them can deselect
+# tests or monkeypatch production code during the test run, so they are locked repo-wide.
+PYTEST_HOOK_FILENAMES: frozenset[str] = frozenset(
+    {"conftest.py", "pytest.ini", "tox.ini", "setup.cfg", "sitecustomize.py", "usercustomize.py"}
+)
 
 
 def _is_test_filename(name: str) -> bool:
@@ -193,12 +87,30 @@ def _git_ref_exists(root: Path, ref: str) -> bool:
 
 
 def _resolve_base_ref(root: Path, base_ref: str) -> str | None:
-    if _git_ref_exists(root, base_ref):
-        return base_ref
+    # Prefer the remote-tracking ref: an agent with git access can move a local branch
+    # (`git branch -f main HEAD`) to make its own cheat the baseline it is compared against.
     remote_candidate = f"origin/{base_ref}"
     if _git_ref_exists(root, remote_candidate):
         return remote_candidate
+    if _git_ref_exists(root, base_ref):
+        return base_ref
     return None
+
+
+def _git_current_files(root: Path) -> list[str]:
+    """Tracked + untracked (non-ignored) files in the working tree."""
+    proc = subprocess.run(
+        ["git", "-c", "safe.directory=*", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
 def _git_list_files(root: Path, ref: str, prefix: str) -> list[str]:
@@ -236,7 +148,9 @@ def check_static_test_quality(root: Path = ROOT) -> list[str]:
         return ["Missing tests/ directory."]
     for py_file in _iter_test_files(tests_dir):
         rel = py_file.relative_to(root).as_posix()
-        stats = _analyze_test_source(py_file.read_text(encoding="utf-8"))
+        source = py_file.read_text(encoding="utf-8")
+        issues.extend(f"{rel}: {issue}" for issue in module_level_skip_issues(source))
+        stats = analyze_test_source(source)
         if not stats:
             issues.append(f"{rel}: contains zero `test_*` functions.")
             continue
@@ -247,7 +161,8 @@ def check_static_test_quality(root: Path = ROOT) -> list[str]:
                 issues.append(f"{rel}::{fn.name}: tautological/trivial assertion detected.")
             if fn.has_swallowed_or_dead_assert:
                 issues.append(
-                    f"{rel}::{fn.name}: swallowed (try/except) or dead-branch (if False) assertion."
+                    f"{rel}::{fn.name}: swallowed (try/except) or dead-branch (if False) assertion "
+                    "(includes suppress/raises(AssertionError) and asserts after return)."
                 )
             if fn.assert_count == 0:
                 issues.append(f"{rel}::{fn.name}: test has zero assertions.")
@@ -278,6 +193,32 @@ def check_harness_lock(
         if base_content.replace("\r\n", "\n") != current_content.replace("\r\n", "\n"):
             issues.append(
                 f"{rel}: locked harness/referee file modified "
+                "(blocked; pass --allow-harness-edit for intentional human updates)."
+            )
+    issues.extend(_check_pytest_hook_files(root, resolved))
+    return issues
+
+
+def _check_pytest_hook_files(root: Path, resolved: str) -> list[str]:
+    def is_hook(rel: str) -> bool:
+        return Path(rel).name in PYTEST_HOOK_FILENAMES and rel not in HARNESS_LOCKED_FILES
+
+    base_files = {rel for rel in _git_list_files(root, resolved, ".") if is_hook(rel)}
+    current_files = {rel for rel in _git_current_files(root) if is_hook(rel)}
+    issues: list[str] = []
+    for rel in sorted(current_files - base_files):
+        issues.append(
+            f"{rel}: new pytest config/hook file (blocked; it can deselect tests or patch code "
+            "during the run; pass --allow-harness-edit for intentional human updates)."
+        )
+    for rel in sorted(base_files - current_files):
+        issues.append(f"{rel}: pytest config/hook file deleted (blocked).")
+    for rel in sorted(base_files & current_files):
+        base_content = _git_show_file(root, resolved, rel) or ""
+        current_content = (root / rel).read_text(encoding="utf-8")
+        if base_content.replace("\r\n", "\n") != current_content.replace("\r\n", "\n"):
+            issues.append(
+                f"{rel}: pytest config/hook file modified "
                 "(blocked; pass --allow-harness-edit for intentional human updates)."
             )
     return issues
@@ -313,15 +254,37 @@ def check_anti_tampering(base_ref: str, root: Path = ROOT) -> list[str]:
         base_src = _git_show_file(root, resolved, rel)
         if base_src is None:
             continue
-        base_stats = _analyze_test_source(base_src)
-        curr_stats = _analyze_test_source(current_path.read_text(encoding="utf-8"))
-        for fn_name, base_fn in base_stats.items():
-            if fn_name not in curr_stats:
-                issues.append(f"{rel}::{fn_name}: existing test was deleted or renamed.")
-            elif curr_stats[fn_name].assert_count < base_fn.assert_count:
+        base_stats = analyze_test_source(base_src)
+        curr_stats = analyze_test_source(current_path.read_text(encoding="utf-8"))
+        issues.extend(_compare_existing_tests(rel, base_stats, curr_stats))
+    return issues
+
+
+def _compare_existing_tests(
+    rel: str,
+    base_stats: dict[str, TestFunctionStats],
+    curr_stats: dict[str, TestFunctionStats],
+) -> list[str]:
+    issues: list[str] = []
+    for fn_name, base_fn in base_stats.items():
+        curr_fn = curr_stats.get(fn_name)
+        if curr_fn is None:
+            issues.append(f"{rel}::{fn_name}: existing test was deleted or renamed.")
+            continue
+        if curr_fn.assert_count < base_fn.assert_count:
+            issues.append(
+                f"{rel}::{fn_name}: assertion count dropped "
+                f"({base_fn.assert_count} -> {curr_fn.assert_count})."
+            )
+            continue
+        remaining = list(curr_fn.assertions)
+        for assertion in base_fn.assertions:
+            if assertion in remaining:
+                remaining.remove(assertion)
+            else:
                 issues.append(
-                    f"{rel}::{fn_name}: assertion count dropped "
-                    f"({base_fn.assert_count} -> {curr_stats[fn_name].assert_count})."
+                    f"{rel}::{fn_name}: existing assertion rewritten or removed: "
+                    f"`{assertion}` (add new assertions instead of editing old ones)."
                 )
     return issues
 
