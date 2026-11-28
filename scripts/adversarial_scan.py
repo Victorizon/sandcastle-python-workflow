@@ -44,11 +44,28 @@ def _run_gitleaks(root: Path) -> tuple[str, bool, str]:
     return ("gitleaks", False, tail or f"exited {proc.returncode}")
 
 
+def _resolve_base_ref(root: Path, base_ref: str) -> str | None:
+    for candidate in (base_ref, f"origin/{base_ref}"):
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            return candidate
+    return None
+
+
 def _run_diff_cover(root: Path, base_ref: str) -> tuple[str, bool, str]:
     pytest_bin = _resolve_py_tool("pytest")
     diff_cover_bin = _resolve_py_tool("diff-cover")
     if pytest_bin is None or diff_cover_bin is None:
         return ("diff-cover", True, "skipped (pytest or diff-cover not installed)")
+    resolved_base = _resolve_base_ref(root, base_ref)
+    if resolved_base is None:
+        return ("diff-cover", True, f"skipped (git base ref `{base_ref}` not found)")
 
     cov_path = root / COVERAGE_XML
     try:
@@ -70,7 +87,7 @@ def _run_diff_cover(root: Path, base_ref: str) -> tuple[str, bool, str]:
             [
                 diff_cover_bin,
                 COVERAGE_XML,
-                f"--compare-branch={base_ref}",
+                f"--compare-branch={resolved_base}",
                 "--fail-under=100",
             ],
             cwd=root,
@@ -79,7 +96,7 @@ def _run_diff_cover(root: Path, base_ref: str) -> tuple[str, bool, str]:
             check=False,
         )
         if dc_proc.returncode == 0:
-            return ("diff-cover", True, f"100% coverage on changed src/ lines vs {base_ref}")
+            return ("diff-cover", True, f"100% coverage on changed src/ lines vs {resolved_base}")
         tail = "\n".join((dc_proc.stdout + "\n" + dc_proc.stderr).strip().splitlines()[:10])
         return ("diff-cover", False, tail or f"exited {dc_proc.returncode}")
     finally:
