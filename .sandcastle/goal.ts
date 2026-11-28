@@ -39,9 +39,9 @@ import {
 import { type ReportSection, writePmHtmlReport } from "./pm-report.js";
 import { runPreflightPriorArtResearch } from "./prior-art.js";
 import { acquireRunLock, assertCleanGitWorktree } from "./preflight.js";
+import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
-const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
 const NPM_BIN = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function currentHeadSha(): string {
@@ -91,12 +91,13 @@ function writeGapTickets(slug: string, plan: { diagnosis: string; tickets: { tit
 
 function collectPassingPytestNames(): Set<string> {
   try {
-    const out = execFileSync(PYTHON_BIN, ["-m", "pytest", "-v"], {
+    const out = execFileSync(resolvePythonBin(), ["-m", "pytest", "-v"], {
       encoding: "utf8",
       stdio: ["pipe", "pipe", "pipe"],
     });
     return parsePassingPytestNames(out);
-  } catch {
+  } catch (err) {
+    console.warn("[WARN] collectPassingPytestNames failed:", err instanceof Error ? err.message : String(err));
     return new Set<string>();
   }
 }
@@ -184,9 +185,13 @@ async function runDeterministicSpecAudit(
 async function main(): Promise<void> {
   assertCleanGitWorktree();
   const releaseGoalLock = acquireRunLock(".goal.lock", "goal");
+  const uninstallShutdown = installGracefulShutdown(() => {
+    releaseGoalLock();
+  });
   try {
     await runGoalLoop();
   } finally {
+    uninstallShutdown();
     releaseGoalLock();
   }
 }
@@ -274,29 +279,41 @@ async function runGoalLoop(): Promise<void> {
         .join("\n\n---\n\n");
 
       console.log(`\n--> Gap-Planner round ${gapPlanRoundsUsed}/${contract.maxGapPlanRounds}...`);
-      const gapRun = await sandcastle.run({
-        sandbox: createDockerSandbox(IMAGE_NAME),
-        name: `Gap-Planner (${gapPlanRoundsUsed})`,
-        agent: createAgent("medium"),
-        promptFile: "./.sandcastle/gap-plan-prompt.md",
-        promptArgs: {
-          GOAL_NAME: contract.name,
-          FAILED_CHECKS: failedSummary || "Ticket checks incomplete.",
-        },
-        output: Output.object({
-          tag: "gap-tickets",
-          schema: GapPlanSchema,
-          maxRetries: 2,
-        }),
-      });
+      const gapRun = await withTransientRetry(
+        () =>
+          sandcastle.run({
+            sandbox: createDockerSandbox(IMAGE_NAME),
+            name: `Gap-Planner (${gapPlanRoundsUsed})`,
+            agent: createAgent("medium"),
+            promptFile: "./.sandcastle/gap-plan-prompt.md",
+            promptArgs: {
+              GOAL_NAME: contract.name,
+              FAILED_CHECKS: failedSummary || "Ticket checks incomplete.",
+            },
+            output: Output.object({
+              tag: "gap-tickets",
+              schema: GapPlanSchema,
+              maxRetries: 2,
+            }),
+          }),
+        { label: `Gap-Planner (${gapPlanRoundsUsed})` },
+      );
       writeGapTickets(contract.slug, gapRun.output);
     }
 
-    // Run one Sandcastle factory pass
+    // Run one Sandcastle factory pass (catch crashes cleanly so stopped receipt/HTML report is always written)
     cyclesRun += 1;
     const shaBefore = currentHeadSha();
     console.log(`\n--> Launching factory cycle #${cyclesRun}...`);
-    execFileSync(NPM_BIN, ["--prefix", ".sandcastle", "run", "factory"], { stdio: "inherit" });
+    try {
+      execFileSync(NPM_BIN, ["--prefix", ".sandcastle", "run", "factory"], { stdio: "inherit" });
+    } catch (err) {
+      stopGoalWithReceipt(
+        `Factory cycle #${cyclesRun} exited with error: ${err instanceof Error ? err.message : String(err)}`,
+        (Date.now() - startedMs) / 60_000,
+      );
+      return;
+    }
     const shaAfter = currentHeadSha();
 
     stalledCycles = shaAfter === shaBefore ? stalledCycles + 1 : 0;

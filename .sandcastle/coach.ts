@@ -95,9 +95,9 @@ export function collectWorkspaceSignals(
     .map((b) => b.trim())
     .filter(Boolean).length;
 
-  const openHumanTickets = countLocalTicketsByStatus("ready-for-human", cwd);
-  const openTriageTickets = countLocalTicketsByStatus("needs-triage", cwd);
-  const openReadyTickets = countLocalTicketsByStatus("ready-for-agent", cwd);
+  const openHumanTickets = Math.max(0, countLocalTicketsByStatus("ready-for-human", cwd));
+  const openTriageTickets = Math.max(0, countLocalTicketsByStatus("needs-triage", cwd));
+  const openReadyTickets = Math.max(0, countLocalTicketsByStatus("ready-for-agent", cwd));
 
   const { verifiedRuns } = loadVerifiedRunHistory(logsDir);
   const ratings = loadHumanRatings(logsDir);

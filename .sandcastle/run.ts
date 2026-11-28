@@ -34,9 +34,10 @@ import {
   assertCleanGitWorktree,
   validatePlannedTicketsAgainstTracker,
 } from "./preflight.js";
+import { installGracefulShutdown, resolvePythonBin, withTransientRetry } from "./resilience.js";
 
 const IMAGE_NAME = process.env["SANDCASTLE_IMAGE"] ?? "sandcastle:python-codex";
-const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
+const PYTHON_BIN = resolvePythonBin();
 
 // Hard numeric caps — guarantees the pipeline can NEVER enter an endless loop.
 const MAX_OUTER_CYCLES = 6;
@@ -651,22 +652,26 @@ async function main(): Promise<void> {
   });
   const dashUrl = await dashboard.start();
   console.log(`\nPM Mission Control Dashboard LIVE at: ${dashUrl}\n`);
+  const uninstallShutdown = installGracefulShutdown(async () => {
+    await dashboard.close();
+    releaseLock();
+  });
 
   try {
     for (let cycle = 1; cycle <= MAX_OUTER_CYCLES; cycle++) {
       dashboard.setCycle(cycle, `Cycle ${cycle}/${MAX_OUTER_CYCLES}: Planner analyzing unblocked slices...`);
 
-      const planRun = await sandcastle.run({
-        sandbox: makeDocker(),
-        name: "Planner",
-        agent: createAgent("medium"),
-        promptFile: "./.sandcastle/plan-prompt.md",
-        output: Output.object({
-          tag: "plan",
-          schema: PlanSchema,
-          maxRetries: 2,
-        }),
-      });
+      const planRun = await withTransientRetry(
+        () =>
+          sandcastle.run({
+            sandbox: makeDocker(),
+            name: "Planner",
+            agent: createAgent("medium"),
+            promptFile: "./.sandcastle/plan-prompt.md",
+            output: Output.object({ tag: "plan", schema: PlanSchema, maxRetries: 2 }),
+          }),
+        { label: `Planner cycle ${cycle}` },
+      );
 
       const liveTrackerTickets = loadLiveTrackerReadyTickets();
       const { valid: tickets, droppedReasons } = validatePlannedTicketsAgainstTracker(
@@ -717,6 +722,14 @@ async function main(): Promise<void> {
           }
         }),
       );
+
+      outcomes.forEach((outcome, idx) => {
+        if (outcome.status === "rejected" && tickets[idx]) {
+          const reason = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+          console.error(`  [CRASH] Worker failed for ${tickets[idx].id}: ${reason}`);
+          escalateTicketToHuman(tickets[idx].id, `Worker crashed unexpectedly: ${reason}`, dashboard);
+        }
+      });
 
       const readyToMerge = tickets.filter((t, idx) => {
         const outcome = outcomes[idx];
@@ -897,6 +910,7 @@ async function main(): Promise<void> {
       `Confidence: ${conf.overall.score}/100 (${conf.overall.badge})\nPM HTML report saved to: ${htmlPath}` +
         formatEndOfRunFooter({ kind: "factory", reportPath: htmlPath }),
     );
+    uninstallShutdown();
     await dashboard.close();
     releaseLock();
   }

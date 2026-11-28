@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { ResearchDepthSchema } from "./prior-art.js";
+import { resolvePythonBin } from "./resilience.js";
 
 export const GoalContractSchema = z.object({
   name: z.string().min(1),
@@ -156,19 +157,21 @@ export function runVerifyCommand(command: string, cwd = process.cwd()): CommandC
   }
 }
 
-const PYTHON_BIN = process.platform === "win32" ? "python" : "python3";
-
 export function countLocalTicketsByStatus(status: string, cwd = process.cwd()): number {
   try {
     const out = execFileSync(
-      PYTHON_BIN,
+      resolvePythonBin(cwd),
       ["scripts/local_tracker.py", "list", "--status", status, "--json"],
       { cwd, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] },
     );
     const items = JSON.parse(out) as unknown[];
-    return Array.isArray(items) ? items.length : 0;
-  } catch {
-    return 0;
+    return Array.isArray(items) ? items.length : -1;
+  } catch (err) {
+    console.warn(
+      `[WARN] local_tracker.py failed while counting "${status}" tickets (failing closed):`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return -1;
   }
 }
 
