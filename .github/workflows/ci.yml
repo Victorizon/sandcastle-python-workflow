@@ -45,3 +45,7 @@ jobs:
       - name: Run Hybrid Anti-Bloat Guard (file-size ratchet + vulture + knip + jscpd)
         run: |
           .venv/bin/python scripts/anti_bloat_guard.py --full
+
+      - name: Run Deterministic Adversarial Scan (diff-cover + CrossHair)
+        run: |
+          .venv/bin/python scripts/adversarial_scan.py --base origin/main

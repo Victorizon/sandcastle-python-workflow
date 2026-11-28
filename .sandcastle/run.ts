@@ -554,7 +554,9 @@ async function processTicket(
         maxIterations: 1,
       });
       reviewStdout = review.stdout;
-      const postReviewCheck = await reviewSandbox.exec("python scripts/check.py");
+      const postReviewCheck = await reviewSandbox.exec(
+        "python scripts/check.py && python scripts/adversarial_scan.py --base main",
+      );
       postCheckExit = postReviewCheck.exitCode;
       postCheckOut = `${postReviewCheck.stdout}\n${postReviewCheck.stderr}`.trim();
     }
@@ -752,6 +754,9 @@ async function main(): Promise<void> {
         execFileSync(PYTHON_BIN, ["scripts/check.py"], { stdio: "inherit" });
         // Pin the immutable host-recorded preMergeSha so moving `main` or `origin/main` cannot reset the guard baseline
         execFileSync(PYTHON_BIN, ["scripts/test_guard.py", "--base", preMergeSha], {
+          stdio: "inherit",
+        });
+        execFileSync(PYTHON_BIN, ["scripts/adversarial_scan.py", "--base", preMergeSha], {
           stdio: "inherit",
         });
       } catch {
