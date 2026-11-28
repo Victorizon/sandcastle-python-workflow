@@ -33,6 +33,51 @@ export interface CoachNudge {
   readonly filePath?: string;
 }
 
+const CONTEXTUAL_TIPS: readonly { readonly pattern: RegExp; readonly tip: string }[] = [
+  {
+    pattern: /\b(error|bug|crash|fail|broken|report|upstream)\b/iu,
+    tip: "Hit a harness bug? Draft an anonymized, issue-only upstream report: `python scripts/upstream_report.py --kind bug --title \"...\" --summary \"...\" --include-latest-trace`.",
+  },
+  {
+    pattern: /\b(slow|timing|diagnose|autopsy|merge|audit|trace|verbose)\b/iu,
+    tip: "Want X-ray timings & Merger/Auditor verdicts? Run `SANDCASTLE_VERBOSE=1 npm --prefix .sandcastle run factory` then `npm --prefix .sandcastle run diagnose`.",
+  },
+  {
+    pattern: /\b(install|setup|onboard|work|prereq|docker|env)\b/iu,
+    tip: "Setting up a fresh machine? Run `python scripts/setup.py --check-only` first (zero changes, exact fix hints), then `python scripts/setup.py`.",
+  },
+  {
+    pattern: /\b(bloat|dead|unused|duplicate|size|clean)\b/iu,
+    tip: "Keep the repo lean with `python scripts/anti_bloat_guard.py --full` (file-size caps + vulture + knip + jscpd).",
+  },
+  {
+    pattern: /\b(security|secret|sast|symbolic|fuzz|adversarial|scan)\b/iu,
+    tip: "Hard-scan diffs for secrets, SAST anti-patterns, 100% diff-cover & Z3 counterexamples: `python scripts/adversarial_scan.py --base main`.",
+  },
+  {
+    pattern: /\b(refactor|legacy|monolith|cassette|migrate)\b/iu,
+    tip: "Refactoring legacy scripts? Freeze baseline debt via `python scripts/ratchet.py --init` and pin SDK behavior with Multi-Round Case Cassettes.",
+  },
+  {
+    pattern: /\b(scale|100|many|slices|backlog|cycles)\b/iu,
+    tip: "Running 100+ slices? Set `SANDCASTLE_MAX_CYCLES=50` — Planner automatically caps payloads to top 15 unblocked summaries.",
+  },
+  {
+    pattern: /\b(new|feature|design|architecture|prior|research|spec)\b/iu,
+    tip: "Starting a new feature? Run `$grill-me` (<= 3 batches), confirm Prior-Art `researchDepth`, and freeze `docs/specs/<slug>.md`.",
+  },
+];
+
+export function pickContextualTip(contextPrompt?: string, seed = Math.floor(Date.now() / 60_000)): string {
+  const text = contextPrompt?.trim() ?? "";
+  if (text.length > 0) {
+    const matched = CONTEXTUAL_TIPS.find((entry) => entry.pattern.test(text));
+    if (matched) return matched.tip;
+  }
+  const idx = Math.abs(seed) % CONTEXTUAL_TIPS.length;
+  return CONTEXTUAL_TIPS[idx]!.tip;
+}
+
 export interface WorkspaceCoachSignals {
   readonly currentBranch: string;
   readonly modifiedFiles: readonly string[];
@@ -277,7 +322,7 @@ export function formatEndOfRunFooter(params: {
     lines.push(`3. Suggested follow-up: ${params.extraCommand}`);
   }
   lines.push(
-    "Tip: Run `npm --prefix .sandcastle run coach` anytime, open docs/WORKFLOW_GUIDE.html, or report anonymized harness bugs/improvements via `python scripts/upstream_report.py`.",
+    `Tip: ${pickContextualTip(params.kind === "factory" || params.kind === "goal" ? "diagnose" : params.kind)}`,
   );
   return lines.join("\n");
 }
@@ -285,6 +330,7 @@ export function formatEndOfRunFooter(params: {
 export function formatCoachOutput(
   signals: WorkspaceCoachSignals,
   nudges: readonly CoachNudge[],
+  contextPrompt?: string,
 ): string {
   const lines: string[] = [
     "",
@@ -306,18 +352,22 @@ export function formatCoachOutput(
   }
 
   lines.push(`Trust Lever: ${signals.trust.diagnosticLever}`);
+  lines.push(`Workflow Tip: ${pickContextualTip(contextPrompt)}`);
   lines.push("Full Visual Handbook: docs/WORKFLOW_GUIDE.html");
   return lines.join("\n");
 }
 
 function main(): void {
+  const argv = process.argv.slice(2);
+  const ctxIdx = argv.indexOf("--context");
+  const contextPrompt = ctxIdx >= 0 ? argv[ctxIdx + 1] : undefined;
   const repoRoot =
     path.basename(process.cwd()) === ".sandcastle"
       ? path.resolve(process.cwd(), "..")
       : process.cwd();
   const signals = collectWorkspaceSignals(repoRoot, path.join(repoRoot, ".sandcastle", "logs"));
   const nudges = buildCoachNudges(signals);
-  console.log(formatCoachOutput(signals, nudges));
+  console.log(formatCoachOutput(signals, nudges, contextPrompt));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
