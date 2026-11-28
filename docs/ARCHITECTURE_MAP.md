@@ -41,7 +41,6 @@ flowchart LR
     n_sandcastle_fix_prompt_md[".sandcastle/fix-prompt.md"]
     n_sandcastle_gap_plan_prompt_md[".sandcastle/gap-plan-prompt.md"]
     n_sandcastle_implement_prompt_md[".sandcastle/implement-prompt.md"]
-    n_sandcastle_logs_upstream_issue_draft_md[".sandcastle/logs/upstream-issue-draft.md"]
     n_sandcastle_merge_prompt_md[".sandcastle/merge-prompt.md"]
     n_sandcastle_nightly_arch_prompt_md[".sandcastle/nightly-arch-prompt.md"]
     n_sandcastle_plan_prompt_md[".sandcastle/plan-prompt.md"]
@@ -149,7 +148,6 @@ flowchart LR
   n_sandcastle_implement_prompt_md --> n_scripts_check_py
   n_sandcastle_implement_prompt_md --> n_scripts_local_tracker_py
   n_sandcastle_implement_prompt_md -.-> n_state_sandcastle_logs
-  n_sandcastle_logs_upstream_issue_draft_md --> n_scripts_upstream_report_py
   n_sandcastle_merge_prompt_md --> n_scripts_check_py
   n_sandcastle_merge_prompt_md --> n_scripts_local_tracker_py
   n_sandcastle_nightly_arch_prompt_md --> n_scripts_check_py

@@ -60,7 +60,12 @@ def _iter_repo_files(root: Path) -> list[Path]:
             continue
         for p in sorted(base.rglob(f"*{suffix}")):
             rel = p.relative_to(root).as_posix()
-            if "node_modules" in rel or "__pycache__" in rel or rel.endswith(".test.ts"):
+            if (
+                "node_modules" in rel
+                or "__pycache__" in rel
+                or rel.startswith((".sandcastle/logs/", ".sandcastle/worktrees/"))
+                or rel.endswith(".test.ts")
+            ):
                 continue
             files.append(p)
     pre_commit = root / ".pre-commit-config.yaml"
@@ -313,7 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     rendered = render_architecture_markdown(nodes, edges)
     out_path = args.output or (root / "docs" / "ARCHITECTURE_MAP.md")
     if args.check:
-        if not out_path.is_file() or out_path.read_text(encoding="utf-8") != rendered:
+        current = (
+            out_path.read_text(encoding="utf-8").replace("\r\n", "\n") if out_path.is_file() else ""
+        )
+        if current != rendered.replace("\r\n", "\n"):
             print(
                 f"{out_path.relative_to(root).as_posix()} is out of date. "
                 "Run `python scripts/arch_map.py` to refresh it.",
