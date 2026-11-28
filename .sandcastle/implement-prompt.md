@@ -26,6 +26,7 @@ Only work on this single ticket. Do not touch unrelated files or close the ticke
 - `rg <pattern>` — fast regex search across source files (prefer over `grep -R`).
 - `ast-grep --pattern '<code-shape>' --lang python` — syntax-aware AST search & safe multi-file refactors.
 - `pytest --testmon` — fast inner-loop TDD running only tests affected by your edits (still run full `python scripts/check.py` before committing).
+- `crosshair check src --per_condition_timeout=3` — Z3 symbolic solver for checking `assert` / PEP-316 contracts on fail-closed logic (`hypothesis-crosshair` is also pre-installed).
 
 # EXECUTION RULES
 

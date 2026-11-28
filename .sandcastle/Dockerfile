@@ -43,6 +43,8 @@ RUN python3 -m venv /opt/venv \
        "pytest-xdist>=3.6" \
        "diff-cover>=9.2" \
        "hypothesis>=6.120.0" \
+       "crosshair-tool>=0.0.80" \
+       "hypothesis-crosshair>=0.0.21" \
        "import-linter>=2.1" \
        "vulture>=2.14"
 
@@ -51,7 +53,7 @@ ENV PYTHONPATH="/home/agent/workspace/src"
 ENV MUTATION_WORKERS="2"
 
 # Ensure both login shells (`bash -lc`) and non-login shells find /opt/venv tools
-RUN for bin in python python3 pip ruff pyright pytest lint-imports vulture diff-cover; do \
+RUN for bin in python python3 pip ruff pyright pytest lint-imports vulture diff-cover crosshair; do \
       ln -sf "/opt/venv/bin/$bin" "/usr/local/bin/$bin"; \
     done \
   && echo 'export PATH="/opt/venv/bin:$PATH"' > /etc/profile.d/opt-venv.sh
