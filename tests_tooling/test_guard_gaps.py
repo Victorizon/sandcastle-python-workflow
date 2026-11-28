@@ -210,6 +210,63 @@ def test_anti_bloat_full_reports_skipped_node_analyzers(tmp_path: Path) -> None:
     assert "PASS (full (file-size + vulture))" in res.stdout
 
 
+def test_unittest_testcase_assertions_are_recognized_and_protected(tmp_path: Path) -> None:
+    """Issue #34: unittest.TestCase assertions count and stay anti-tamper locked."""
+    repo = _init_temp_git_repo(tmp_path)
+    ut_file = repo / "tests" / "test_unittest_sample.py"
+    ut_file.write_text(
+        "import unittest\n\n"
+        "class ExampleTests(unittest.TestCase):\n"
+        "    def test_value(self) -> None:\n"
+        "        result = len([1, 2, 3])\n"
+        "        self.assertEqual(result, 3)\n\n"
+        "    def test_raises(self) -> None:\n"
+        "        with self.assertRaises(ValueError):\n"
+        "            int('bad')\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", "tests/test_unittest_sample.py")
+    _git(repo, "commit", "-m", "add unittest suite")
+
+    # 1. Valid unittest.TestCase suite passes
+    ok_res = _run_test_guard(repo)
+    assert ok_res.returncode == 0, ok_res.stdout + ok_res.stderr
+
+    # 2. Rewriting an existing unittest assertion is blocked
+    ut_file.write_text(
+        "import unittest\n\n"
+        "class ExampleTests(unittest.TestCase):\n"
+        "    def test_value(self) -> None:\n"
+        "        result = len([1, 2, 3])\n"
+        "        self.assertIn(result, (3, 4))\n\n"
+        "    def test_raises(self) -> None:\n"
+        "        with self.assertRaises(ValueError):\n"
+        "            int('bad')\n",
+        encoding="utf-8",
+    )
+    rewrite_res = _run_test_guard(repo)
+    assert rewrite_res.returncode == 1
+    assert "rewritten" in rewrite_res.stdout
+
+    # 3. Trivial or swallowed unittest assertions are blocked
+    (repo / "tests" / "test_unittest_weak.py").write_text(
+        "import unittest\n\n"
+        "class WeakTests(unittest.TestCase):\n"
+        "    def test_trivial(self) -> None:\n"
+        "        self.assertTrue(True)\n\n"
+        "    def test_swallowed(self) -> None:\n"
+        "        try:\n"
+        "            self.assertEqual(len([1]), 2)\n"
+        "        except Exception:\n"
+        "            pass\n",
+        encoding="utf-8",
+    )
+    weak_res = _run_test_guard(repo)
+    assert weak_res.returncode == 1
+    assert "test_trivial: tautological/trivial" in weak_res.stdout
+    assert "test_swallowed: swallowed" in weak_res.stdout
+
+
 def test_venv_run_reports_missing_tool(tmp_path: Path) -> None:
     res = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "venv_run.py"), "definitely-not-a-tool"],
